@@ -1,8 +1,6 @@
 extern crate serial;
 
-use self::serial::SerialPort;
-
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{self, BufRead, BufReader};
 use std::str;
 use std::sync::mpsc;
 use std::thread;
@@ -10,7 +8,7 @@ use std::time::Duration;
 
 const GSM_SERIAL_PORT: &'static str = "/dev/ttyAMA0";
 
-const TEST_AD: &'static str = "AT";
+const TEST_PHONE_NUMBER: &'static str = "+11234567890";
 
 // This is the amount of time that the event thread spends waiting for
 // responses from the GSM radio. This will bound how long it takes for
@@ -19,7 +17,33 @@ const PORT_TIMEOUT_MS: u64 = 1000;
 
 type SerialThreadResult = Result<(), self::serial::Error>;
 
-struct Command {}
+struct Command {
+    string: String,
+    write_cr: bool,
+}
+
+impl Command {
+    pub fn new_at() -> Command {
+        Command {
+            string: "AT".to_string(),
+            write_cr: true
+        }
+    }
+
+    pub fn new_hangup() -> Command {
+        Command {
+            string: "ATH".to_string(),
+            write_cr: true
+        }
+    }
+
+    pub fn new_dial(number: &str) -> Command {
+        Command {
+            string: format!("ATD{};", number),
+            write_cr: true
+        }
+    }
+}
 
 #[derive(Debug)]
 struct TTYPhone {
@@ -32,57 +56,100 @@ impl TTYPhone {
         let serial_port_str: String = String::from(serial_port);
 
         let (send, recv) = mpsc::channel::<Command>();
-        
+
         let handle = try!(TTYPhone::start_listener(recv, serial_port_str));
-        
+
         let phone = TTYPhone {
             thread_handler: handle,
             command_sender: send,
         };
-        
+
         Ok(phone)
     }
 
-    fn start_listener(receiver: mpsc::Receiver<Command>, serial_port: String) -> io::Result<thread::JoinHandle<SerialThreadResult>> {
+    pub fn send_command(&self, cmd: Command) -> Result<(), mpsc::SendError<Command>> {
+        self.command_sender.send(cmd)
+    }
+
+    fn start_listener(receiver: mpsc::Receiver<Command>,
+                      serial_port: String) -> io::Result<thread::JoinHandle<SerialThreadResult>> {
         // Create a reader thread to catch all responses from the
         // serial port
         thread::Builder::new().name("gsm_evt".to_string()).spawn(
-            || {
+            move || {
                 // TODO: [hleath 2017-09-24] This thread really
                 // shouldn't ever return with an error. It should
                 // attempt to recover or take the program down.
-                
+
                 // Open the serial port
-                let mut port = match serial::open(GSM_SERIAL_PORT) {
+                let mut port = match serial::open(&serial_port) {
                     Ok(port) => port,
                     Err(e) => return Err(e),
                 };
 
-                // Configure the port
-                try!(port.reconfigure(&|settings| {
-                    try!(settings.set_baud_rate(serial::Baud115200));
-                    Ok(())
-                }));
-                try!(port.set_timeout(Duration::from_millis(PORT_TIMEOUT_MS)));
-                
+                try!(Self::configure_serial_port(&mut port));
+
                 let mut reader = BufReader::new(port);
-                
+
                 loop {
-                    try!(reader.get_mut().write(&[b'A', b'T', 13]));
-                    
-                    let mut response_buffer: Vec<u8> = Vec::new();
-                    
-                    match reader.read_until(b'\r', &mut response_buffer) {
-                        Ok(_) => println!("{}", String::from_utf8(response_buffer).expect("Invalid UTF-8")),
-                        Err(e) => println!("{}", e)
+                    // First try to get a command from the command
+                    // channel:
+                    match receiver.try_recv() {
+                        Ok(cmd) => {
+                            try!(Self::write_command_to_serial_port(reader.get_mut(), cmd));
+                        }, // issue command
+                        Err(mpsc::TryRecvError::Empty) => {}, // Nothing to do
+                        Err(mpsc::TryRecvError::Disconnected) => {
+                            return Ok(())
+                        }
                     }
-                    
+
+                    match Self::try_read_from_serial_port(&mut reader) {
+                        Ok(data) => println!("received: {}", String::from_utf8(data).expect("Invalid UTF-8")),
+                        Err(_) => {
+                            // Read likely failed because of timeout, do nothing.
+                            ()
+                        }
+                    };
+
                     thread::sleep(Duration::from_millis(1000));
                 }
             })
     }
 
-    fn wait(mut self) {
+    fn configure_serial_port<T: serial::SerialPort>(mut port: &mut T) -> io::Result<()> {
+        // Configure the port
+        try!(port.reconfigure(&|settings| {
+            try!(settings.set_baud_rate(serial::Baud115200));
+            Ok(())
+        }));
+
+        try!(port.set_timeout(Duration::from_millis(PORT_TIMEOUT_MS)));
+        Ok(())
+    }
+
+    fn try_read_from_serial_port<T: serial::SerialPort>(mut reader: &mut BufReader<T>) -> io::Result<Vec<u8>> {
+        let mut response_buffer: Vec<u8> = Vec::new();
+
+        match reader.read_until(b'\r', &mut response_buffer) {
+            Ok(_) => Ok(response_buffer),
+            Err(e) => Err(e)
+        }
+    }
+
+    fn write_command_to_serial_port<T: serial::SerialPort>(mut port: &mut T, cmd: Command) -> io::Result<()> {
+        println!("Going to send {} with cr {:?}", cmd.string, cmd.write_cr);
+        try!(port.write(cmd.string.as_bytes()));
+
+        if cmd.write_cr {
+            try!(port.write(&[b'\r']));
+        }
+
+        Ok(())
+    }
+
+    fn exit(self) {
+        // disconnect the sender... (if we actuall want to exit)
         println!("{:?}", self.thread_handler.join());
     }
 }
@@ -99,58 +166,18 @@ pub fn gsm_main() -> io::Result<()> {
     match TTYPhone::new(GSM_SERIAL_PORT) {
         Ok(phone) => {
             println!("started");
-            phone.wait();
+
+            phone.send_command(Command::new_at()).unwrap();
+
+            phone.send_command(Command::new_dial(TEST_PHONE_NUMBER)).unwrap();
+
+            thread::sleep(Duration::from_millis(30000));
+
+            phone.send_command(Command::new_hangup()).unwrap();
+
+            phone.exit();
             Ok(())
         },
         Err(e) => Err(e)
     }
 }
-
-// fn start_on_port<T: serial::SerialPort>(mut port: T) -> io::Result<()> {
-
-//     let mut response_buffer: Vec<u8> = vec![0; 255];
-
-//     let mut reader = BufReader::new(port);
-
-//     write_command(reader.get_mut(), TEST_AD);
-//     println!("Got1 {}", try!(read_response(&mut reader)));
-
-//     thread::sleep(Duration::from_millis(100));
-
-//     send_text_message(&mut reader, "this is a message", &mut response_buffer);
-//     send_text_message(&mut reader, "this is a second message", &mut response_buffer);
-//     // try!(read_response(&mut reader, &mut responseBuffer));
-//     Ok(())
-// }
-
-// fn send_text_message<T: serial::SerialPort>(mut reader: &mut BufReader<T>, message: &str,
-//                                             mut response_buffer: &mut Vec<u8>) -> io::Result<()> {
-//     write_command(reader.get_mut(), TEST_TEXT_MESSAGE);
-    
-//     thread::sleep(Duration::from_millis(100));
-    
-//     try!(reader.get_mut().write(message.as_bytes()));
-    
-//     thread::sleep(Duration::from_millis(100));
-    
-//     try!(reader.get_mut().write(&[26]));
-    
-//     thread::sleep(Duration::from_millis(500));
-    
-//     // try!(port.read(&mut buf[..]));
-//     println!("Got2 {}", try!(read_response(&mut reader)));
-//     thread::sleep(Duration::from_millis(500));
-//     println!("Got3 {}", try!(read_response(&mut reader)));
-//     thread::sleep(Duration::from_millis(1000));
-//     println!("Got4 {}", try!(read_response(&mut reader)));
-//     thread::sleep(Duration::from_millis(500));
-//     println!("Got5 {}", try!(read_response(&mut reader)));
-//     thread::sleep(Duration::from_millis(500));
-//     Ok(())
-// }
-
-// fn write_command<T: io::Write>(mut writer: T, command: &str) -> io::Result<()> {
-//     try!(writer.write(command.as_bytes()));
-//     try!(writer.write(&[b'\r']));
-//     Ok(())
-// }
