@@ -1,5 +1,6 @@
 extern crate serial;
 
+mod sms;
 mod pdu;
 
 use std::io::{self, BufRead, BufReader};
@@ -34,7 +35,7 @@ type SerialThreadResult = Result<(), self::serial::Error>;
 trait Callback {
 }
 
-struct Command {
+pub struct Command {
     bytes: Vec<u8>,
     write_cr: bool,
     sender: Option<mpsc::Sender<String>>,
@@ -255,12 +256,11 @@ pub fn gsm_main() -> io::Result<()> {
 
     match TTYPhone::new(GSM_SERIAL_PORT) {
         Ok(phone) => {
-            println!("started");
-
+            // Send AT just to be sure that things are working.
             phone.send_command(Command::new_at()).unwrap();
 
             let (send, recv) = mpsc::channel();
-
+            
             phone.send_command(Command {
                 bytes: "AT+CMGR=3".as_bytes().to_vec(),
                 write_cr: true,
@@ -274,19 +274,8 @@ pub fn gsm_main() -> io::Result<()> {
             lines.next().unwrap();
             println!("parsing response {:?}", pdu::Message::from_string(lines.next().unwrap().to_string()));
 
-            phone.send_command(Command {
-                bytes: "AT+CMGL=4".as_bytes().to_vec(),
-                write_cr: true,
-                sender: Some(send.clone()),
-            }).unwrap();
-
-            println!("got response {}", recv.recv().unwrap());
-
-            // phone.send_command(Command::new_dial(TEST_PHONE_NUMBER)).unwrap();
-
-            // thread::sleep(Duration::from_millis(30000));
-
-            // phone.send_command(Command::new_hangup()).unwrap();
+            //let mut mm = sms::MessagingManager::new(phone.command_sender.clone());
+            //mm.load_text_messages();
 
             phone.exit();
             Ok(())

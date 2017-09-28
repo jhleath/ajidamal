@@ -1,67 +1,103 @@
+use std::str;
+use std::num::ParseIntError;
+use nom::IResult;
+
 #[derive(Debug)]
 pub struct Message {
     service_center: String,
-    command_type: u64,
+    command_type: u8,
     sender: String,
     time_stamp: String,
-    protocol_id: u64,
-    encoding_scheme: u64,
-    user_data: String,
+    protocol_id: u8,
+    encoding_scheme: u8,
+    user_data: Vec<u8>,
     // Message requires that user data is valid UTF-8.
 }
 
+enum Error {
+    ParseError
+}
+
+fn u8_from_hex_str(data: &[u8]) -> Result<u8, Error> {
+    str::from_utf8(data).or(Err(Error::ParseError)).and_then(|s| {
+        u8::from_str_radix(s, 16).or(Err(Error::ParseError))
+    })
+}
+
+fn str_from_decimal_octet(data: &[u8]) -> Result<String, Error> {
+    let mut output = String::new();
+
+    output.push(char::from(data[1]));
+
+    if data[0] != b'F' {
+        output.push(char::from(data[0]));
+    }
+
+    Ok(output)
+}
+
+fn concat_strings(data: Vec<String>) -> Result<String, Error> {
+    Ok(data.into_iter().fold(String::new(), |acc, item| {
+        acc + &item
+    }))
+}
+
+fn get_decimal_length(data: u8) -> Result<u8, Error> {
+    Ok((data / 2) + 1)
+}
+
+fn to_vec(data: &[u8]) -> Result<Vec<u8>, Error> {
+    Ok(data.to_vec())
+}
+
+named!(hex_octet<u8>, map_res!(take!(2), u8_from_hex_str));
+
+named!(decimal_octet<String>, map_res!(take!(2), str_from_decimal_octet));
+
+named_args!(decimal_octet_number(length: u8)<String>,
+            map_res!(
+                count!(decimal_octet, length as usize),
+                concat_strings));
+
+named!(parse_pdu<Message>,
+       do_parse!(
+           sc_length: hex_octet >>
+           sc_address_type: hex_octet >>
+           service_center: apply!(decimal_octet_number, sc_length - 1) >>
+           message_type: hex_octet >>
+           sender_length: map_res!(hex_octet, get_decimal_length) >>
+           sender_addres_type: hex_octet >>    
+           sender: apply!(decimal_octet_number, sender_length) >>
+           protocol_id: hex_octet >>
+           encoding_scheme: hex_octet >>
+           time_stamp: apply!(decimal_octet_number, 7) >>
+           ud_length: hex_octet >>
+           user_data: map_res!(take!(ud_length), to_vec) >>
+               
+           (Message {
+               service_center: service_center,
+               command_type: message_type,
+               sender: sender,
+               protocol_id: protocol_id,
+               encoding_scheme: encoding_scheme,
+               time_stamp: time_stamp,
+               user_data: user_data
+           })
+       )
+);
+
 impl Message {
     pub fn from_string(pdu_string: String) -> Result<Message, ()> {
-        // Parse the string as octects (groups of two hexadecimal characters)
-        let (service_center, rest) = match parse_number(pdu_string.as_ref(), false) {
-            Some(s) => s,
-            None => return Err(())
-        };
-
-        let (message_type, rest) = match get_hex_octet(rest) {
-            Some(t) => t,
-            None => return Err(())
-        };
-        
-        let (sender, rest) = match parse_number(rest, true) {
-            Some(s) => s,
-            None => return Err(())
-        };
-        
-        let (pid, rest) = match get_hex_octet(rest) {
-            Some(t) => t,
-            None => return Err(())
-        };
-        
-        let (dcs, rest) = match get_hex_octet(rest) {
-            Some(t) => t,
-            None => return Err(())
-        };
-
-        let (time_stamp, rest) = match get_decimal_octets(rest, 7) {
-            Some(t) => t,
-            None => return Err(())
-        };
-
-        let (mut length_of_user_message, rest) = match get_hex_octet(rest) {
-            Some(t) => t,
-            None => return Err(())
-        };
-
-        let user_data = match parse_gsm_alphabet(rest, length_of_user_message) {
-            Some(t) => t,
-            None => return Err(())
-        };
-
-        Ok(Message{
-            service_center: service_center,
-            command_type: message_type as u64,
-            sender: sender,
-            protocol_id: pid as u64,
-            encoding_scheme: dcs as u64,
-            time_stamp: time_stamp,
-            user_data: user_data,
-        })
+        match parse_pdu(pdu_string.as_bytes()) {
+            IResult::Done(rest, m) => {
+                Ok(m)
+            },
+            IResult::Error(e) => Err(()),
+            IResult::Incomplete(n) => {
+                println!("incomplete? {:?}", n);
+                Err(())
+            }
+        }
     }
 }
 
@@ -89,10 +125,11 @@ const gsm_chars: &[char] = &[
     
 ];
 
-fn parse_gsm_alphabet(pdu_string: &str, length: u8) -> Option<String> {
+fn parse_gsm_alphabet(pdu_string: &[u8]) -> Result<String, ()> {
     let mut parsed_octets = 0;
     let mut output = String::new();
     let mut rest = pdu_string;
+    let length = pdu_string.len();
 
     let mut saved_byte: u8 = 0;
     while parsed_octets < length {
@@ -104,7 +141,7 @@ fn parse_gsm_alphabet(pdu_string: &str, length: u8) -> Option<String> {
             continue;
         }
 
-        let (next_byte, new_rest) = get_hex_octet(rest).unwrap();
+        let (new_rest, next_byte) = hex_octet(rest).unwrap();
         rest = new_rest;
         let character = (next_byte & gsm_masks[parse_stage as usize]) << parse_stage;
         
@@ -113,71 +150,21 @@ fn parse_gsm_alphabet(pdu_string: &str, length: u8) -> Option<String> {
         parsed_octets += 1;
     };
 
-    Some(output)
+    Ok(output)
 }
 
-fn parse_number(pdu_string: &str, expecting_decimal_length: bool) -> Option<(String, &str)> {
-    get_hex_octet(pdu_string).and_then(|(num_sender_bytes, rest)| {
-        if num_sender_bytes == 0 {
-            return Some((0, rest))
-        }
-        
-        get_hex_octet(rest).and_then(|(address_format, rest)| {
-            assert_eq!(address_format, 145);
-            Some((num_sender_bytes - 1, rest))
-        })
-    }).and_then(|(mut num_sender_bytes, rest)| {
-        if expecting_decimal_length {
-            num_sender_bytes = (num_sender_bytes / 2) + 1;
-        }
-        
-        get_decimal_octets(rest, num_sender_bytes)
-    })
+
+fn combine_u8s(data: &[u8]) -> Result<u16, ()> {
+    Ok(((data[0] as u16) << 8) + (data[1] as u16))
 }
 
-fn get_hex_octet(pdu_string: &str) -> Option<(u8, &str)> {
-    if pdu_string.len() < 2 {
-        return None
-    }
-    
-    let (octet, cdr) = pdu_string.split_at(2);
-    Some((u8::from_str_radix(octet, 16).expect("Received invalid characters."),
-          cdr))
-}
+named!(u8_vec_to_u16_vec < &[u8], Vec<u16> >, many0!(
+    map_res!(take!(2), combine_u8s)));
 
-fn get_decimal_octets(pdu_string: &str, num_octets: u8) -> Option<(String, &str)> {
-    if num_octets == 0 {
-        return Some(("".to_string(), pdu_string))
+fn parse_utf16(pdu_string: &[u8]) -> Result<String, ()> {
+    let utf16_str: Vec<u16> = u8_vec_to_u16_vec(pdu_string).to_result().unwrap();
+    match String::from_utf16(utf16_str.as_ref()) {
+        Ok(s) => Ok(s),
+        Err(_) => Err(()),
     }
-    
-    let mut iter = pdu_string.chars();
-    let mut output_string = String::new();
-    let mut parsed_octets = 0;
-    
-    while parsed_octets < num_octets {
-        let first = iter.next();
-        let second = iter.next();
-        
-        output_string.push(match second {
-            Some(digit) => digit,
-            None => return None,
-        });
-        
-        output_string.push(match first {
-            Some(digit) => {
-                if parsed_octets + 1 == num_octets && digit == 'F' {
-                    // A final F shows that there were an odd number
-                    // of digits.
-                    break;
-                }
-                
-                digit
-            },
-            None => return None,
-        });
-
-        parsed_octets += 1
-    }
-
-    Some((output_string, iter.as_str()))
 }
