@@ -1,17 +1,47 @@
+extern crate chrono;
+
+use self::chrono::prelude::*;
 use std::str;
 use std::num::ParseIntError;
 use nom::IResult;
+use nom;
+
+#[derive(Debug)]
+pub struct Number {
+    format: AddressType,
+    number: String,
+}
+
+#[derive(Debug)]
+pub struct UserData {
+    encoding: Encoding,
+    data: String
+}
 
 #[derive(Debug)]
 pub struct Message {
-    service_center: String,
-    command_type: u8,
-    sender: String,
-    time_stamp: String,
+    service_center: Number,
+    command_type: CommandType,
+    sender: Number,
+    time_stamp: DateTime<Utc>,
     protocol_id: u8,
-    encoding_scheme: u8,
-    user_data: Vec<u8>,
-    // Message requires that user data is valid UTF-8.
+    user_data: UserData,
+}
+
+#[derive(Debug)]
+enum CommandType {
+    SmsDeliver,
+}
+
+#[derive(Debug)]
+enum Encoding {
+    Gsm7Bit,
+    Utf16,
+}
+
+#[derive(Debug)]
+enum AddressType {
+    International // 145
 }
 
 enum Error {
@@ -50,6 +80,71 @@ fn to_vec(data: &[u8]) -> Result<Vec<u8>, Error> {
     Ok(data.to_vec())
 }
 
+fn to_command_type(data: u8) -> Result<CommandType, Error> {
+    match data {
+        4 => Ok(CommandType::SmsDeliver),
+        _ => Err(Error::ParseError)
+    }
+}
+
+fn to_encoding_scheme(data: u8) -> Result<Encoding, Error> {
+    match data {
+        0 => Ok(Encoding::Gsm7Bit),
+        8 => Ok(Encoding::Utf16),
+        _ => Err(Error::ParseError)
+    }
+}
+
+fn to_address_type(data: u8) -> Result<AddressType, Error> {
+    match data {
+        145 => Ok(AddressType::International),
+        _ => Err(Error::ParseError)
+    }
+}
+
+fn parse_date_time(mut data: String) -> Result<DateTime<Utc>, Error> {
+    //yyMMddHHMMss
+    let FORMAT_STRING: &str = "%y%m%d%H%M%S";
+
+    // First parse the time zone off the end of the string (last two
+    // digits).
+    let length: usize = data.len() - 2;
+    let mut time_zone: i32 = match data.split_off(length).parse() {
+        Ok(v) => v,
+        Err(_) => return Err(Error::ParseError)
+    };
+
+    // Adjust time_zone for encoding scheme
+    if time_zone > 50 {
+        // Convert 96 to -4
+        time_zone = time_zone - 100;
+    }
+
+    let datetime = match FixedOffset::east(time_zone * 3600)
+                                     .datetime_from_str(data.as_ref(), FORMAT_STRING) {
+        Ok(d) => d.with_timezone(&Utc),
+        Err(e) => {
+            println!("Got {:?} parsing the datetime", e);
+            return Err(Error::ParseError)
+        }
+    };
+
+    Ok(datetime)
+}
+
+fn parse_user_data(data: &[u8], encoding: Encoding, length: u8) -> UserData {
+    match encoding {
+        Encoding::Gsm7Bit => UserData {
+            encoding: Encoding::Gsm7Bit,
+            data: parse_gsm_alphabet(data, length).unwrap(),
+        },
+        Encoding::Utf16 => UserData {
+            encoding: Encoding::Utf16,
+            data: parse_utf16(data).unwrap(),
+        }
+    }
+}
+
 named!(hex_octet<u8>, map_res!(take!(2), u8_from_hex_str));
 
 named!(decimal_octet<String>, map_res!(take!(2), str_from_decimal_octet));
@@ -62,26 +157,31 @@ named_args!(decimal_octet_number(length: u8)<String>,
 named!(parse_pdu<Message>,
        do_parse!(
            sc_length: hex_octet >>
-           sc_address_type: hex_octet >>
+           sc_address_type: map_res!(hex_octet, to_address_type) >>
            service_center: apply!(decimal_octet_number, sc_length - 1) >>
-           message_type: hex_octet >>
+           message_type: map_res!(hex_octet, to_command_type) >>
            sender_length: map_res!(hex_octet, get_decimal_length) >>
-           sender_addres_type: hex_octet >>    
+           sender_address_type: map_res!(hex_octet, to_address_type) >>    
            sender: apply!(decimal_octet_number, sender_length) >>
            protocol_id: hex_octet >>
-           encoding_scheme: hex_octet >>
-           time_stamp: apply!(decimal_octet_number, 7) >>
+           encoding_scheme: map_res!(hex_octet, to_encoding_scheme) >>
+           time_stamp: map_res!(apply!(decimal_octet_number, 7), parse_date_time) >>
            ud_length: hex_octet >>
-           user_data: map_res!(take!(ud_length), to_vec) >>
+           user_data: call!(nom::rest) >>
                
            (Message {
-               service_center: service_center,
+               service_center: Number {
+                   format: sc_address_type,
+                   number: service_center,
+               },
                command_type: message_type,
-               sender: sender,
+               sender: Number {
+                   format: sender_address_type,
+                   number: sender,
+               },
                protocol_id: protocol_id,
-               encoding_scheme: encoding_scheme,
                time_stamp: time_stamp,
-               user_data: user_data
+               user_data: parse_user_data(user_data, encoding_scheme, ud_length)
            })
        )
 );
@@ -125,11 +225,10 @@ const gsm_chars: &[char] = &[
     
 ];
 
-fn parse_gsm_alphabet(pdu_string: &[u8]) -> Result<String, ()> {
+fn parse_gsm_alphabet(pdu_string: &[u8], length: u8) -> Result<String, ()> {
     let mut parsed_octets = 0;
     let mut output = String::new();
     let mut rest = pdu_string;
-    let length = pdu_string.len();
 
     let mut saved_byte: u8 = 0;
     while parsed_octets < length {

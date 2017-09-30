@@ -274,8 +274,8 @@ pub fn gsm_main() -> io::Result<()> {
             lines.next().unwrap();
             println!("parsing response {:?}", pdu::Message::from_string(lines.next().unwrap().to_string()));
 
-            //let mut mm = sms::MessagingManager::new(phone.command_sender.clone());
-            //mm.load_text_messages();
+            // let mut mm = sms::MessagingManager::new(phone.command_sender.clone());
+            // mm.load_text_messages();
 
             phone.exit();
             Ok(())
