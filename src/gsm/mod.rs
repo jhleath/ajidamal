@@ -1,7 +1,10 @@
 extern crate serial;
 
-mod sms;
+pub mod sms;
 mod pdu;
+pub mod command;
+mod responses;
+mod errors;
 
 use std::io::{self, BufRead, BufReader};
 use std::str;
@@ -13,100 +16,29 @@ const GSM_SERIAL_PORT: &'static str = "/dev/ttyAMA0";
 
 const TEST_PHONE_NUMBER: &'static str = "+11234567890";
 
-// Phone Modes:
-// PDU(0) vs Text mode(1) for SMS = AT+CMGF
-
 // This is the amount of time that the event thread spends waiting for
 // responses from the GSM radio. This will bound how long it takes for
 // a command to actually get send to the module.
 const PORT_TIMEOUT_MS: u64 = 1000;
 
-// Callbacks in Rust:
-// Command, CommandResult -> T, Sender<T>
+// How long for the event loop thread to sleep in between reads. This
+// will bound the input/output speed of the device from this layer
+// since the driver will only read one line at a time for now.
+const EVT_THREAD_SLEEP_MS: u64 = 10;
 
 type SerialThreadResult = Result<(), self::serial::Error>;
-
-// trait Command<T: Send> {
-//     fn get_bytes(&self) -> &[u8];
-//     fn translate_response(&self, resp: String) -> Result<T, ()>;
-//     fn callback(&self, resp: T);
-// }
-
-trait Callback {
-}
-
-pub struct Command {
-    bytes: Vec<u8>,
-    write_cr: bool,
-    sender: Option<mpsc::Sender<String>>,
-}
-
-impl Command {
-    pub fn new_at() -> Command {
-        Command {
-            bytes: "AT".as_bytes().to_vec(),
-            write_cr: true,
-            sender: None,
-        }
-    }
-
-    pub fn new_hangup() -> Command {
-        // VOICE CALL: END:
-        Command {
-            bytes: "ATH".as_bytes().to_vec(),
-            write_cr: true,
-            sender: None,
-        }
-    }
-
-    pub fn new_dial(number: &str) -> Command {
-        // VOICE CALL: BEGIN:
-        Command {
-            bytes: format!("ATD{};", number).as_bytes().to_vec(),
-            write_cr: true,
-            sender: None,
-        }
-    }
-
-    pub fn new_signal_quality() -> Command {
-        Command {
-            bytes: "AT+CSQ?".as_bytes().to_vec(),
-            write_cr: true,
-            sender: None,
-        }
-    }
-
-    pub fn new_operator_select() -> Command {
-        Command {
-            bytes: "AT+COPS?".as_bytes().to_vec(),
-            write_cr: true,
-            sender: None,
-        }
-    }
-
-    pub fn new_network_system_mode() -> Command {
-        Command {
-            bytes: "AT+CNSMOD?".as_bytes().to_vec(),
-            write_cr: true,
-            sender: None,
-        }
-    }
-
-    // Ringing: 2
-    // MISSED_CALL: 09:21AM <NUM>
-}
 
 #[derive(Debug)]
 struct TTYPhone {
     thread_handler: thread::JoinHandle<SerialThreadResult>,
-    command_sender: mpsc::Sender<Command>
+    command_sender: mpsc::Sender<command::RawCommand>
 }
 
 impl TTYPhone {
     pub fn new(serial_port: &str) -> io::Result<TTYPhone> {
         let serial_port_str: String = String::from(serial_port);
 
-        let (send, recv) = mpsc::channel::<Command>();
+        let (send, recv) = mpsc::channel::<command::RawCommand>();
 
         let handle = try!(TTYPhone::start_listener(recv, serial_port_str));
 
@@ -118,16 +50,18 @@ impl TTYPhone {
         Ok(phone)
     }
 
-    pub fn send_command(&self, cmd: Command) -> Result<(), mpsc::SendError<Command>> {
+    pub fn send_command(&self, cmd: command::RawCommand) -> Result<(), mpsc::SendError<command::RawCommand>> {
         self.command_sender.send(cmd)
     }
 
-    fn start_listener(receiver: mpsc::Receiver<Command>,
+    fn start_listener(receiver: mpsc::Receiver<command::RawCommand>,
                       serial_port: String) -> io::Result<thread::JoinHandle<SerialThreadResult>> {
         // Create a reader thread to catch all responses from the
         // serial port
         thread::Builder::new().name("gsm_evt".to_string()).spawn(
             move || {
+                // TODO: [hleath 2017-09-30] Use Async IO.
+                
                 // TODO: [hleath 2017-09-24] This thread really
                 // shouldn't ever return with an error. It should
                 // attempt to recover or take the program down.
@@ -143,7 +77,7 @@ impl TTYPhone {
                 let mut reader = BufReader::new(port);
 
                 let mut response = String::new();
-                let mut cmd: Option<Command> = None;
+                let mut cmd: Option<command::RawCommand> = None;
 
                 loop {
                     if cmd.is_none() {
@@ -173,8 +107,8 @@ impl TTYPhone {
                         Err(e) => if e.kind() == io::ErrorKind::TimedOut {
                             if response.len() > 0 {
                                 // Send response back to the Command.
-                                match cmd.and_then(|f| f.sender ) {
-                                    Some(sender) => sender.send(response).ok(),
+                                match cmd.and_then(|f| f.get_callback() ) {
+                                    Some((command_type, sender)) => sender.send((command_type, response)).ok(),
                                     None => {
                                         println!("received unsolicited response {}", response);
                                         None
@@ -196,7 +130,7 @@ impl TTYPhone {
                     // part of the same response. And a carriage
                     // return (13) is at the end of each line.
 
-                    thread::sleep(Duration::from_millis(100));
+                    thread::sleep(Duration::from_millis(EVT_THREAD_SLEEP_MS));
                 }
             })
     }
@@ -228,47 +162,33 @@ impl TTYPhone {
         }
     }
 
-    fn write_command_to_serial_port<T: serial::SerialPort>(mut port: &mut T, cmd: &Command) -> io::Result<()> {
-        println!("Going to send {:?} with cr {:?}", cmd.bytes, cmd.write_cr);
-        try!(port.write(cmd.bytes.as_ref()));
-
-        if cmd.write_cr {
-            try!(port.write(&[b'\r']));
-        }
+    fn write_command_to_serial_port<T: serial::SerialPort>(mut port: &mut T, cmd: &command::RawCommand) -> io::Result<()> {
+        let sending_bytes = cmd.render();
+        println!("Going to send {:?}.", sending_bytes);
+        try!(port.write(sending_bytes.as_ref()));
 
         Ok(())
     }
 
     fn exit(self) {
-        // disconnect the sender... (if we actuall want to exit)
+        // TODO: disconnect the sender... (if we actuall want to exit)
         println!("{:?}", self.thread_handler.join());
     }
 }
 
 pub fn gsm_main() -> io::Result<()> {
-    // match serial::open(GSM_SERIAL_PORT) {
-    //     Ok(port) => start_on_port(port),
-    //     Err(e) => {
-    //         println!("failure: {}", e);
-    //         Ok(())
-    //     }
-    // }
-
     match TTYPhone::new(GSM_SERIAL_PORT) {
         Ok(phone) => {
             // Send AT just to be sure that things are working.
-            phone.send_command(Command::new_at()).unwrap();
+            let pipeline = command::Pipeline::new(phone.command_sender.clone());
+            pipeline.attention(None).unwrap();
 
             let (send, recv) = mpsc::channel();
-            
-            phone.send_command(Command {
-                bytes: "AT+CMGR=3".as_bytes().to_vec(),
-                write_cr: true,
-                sender: Some(send.clone()),
-            }).unwrap();
 
-            let response = recv.recv().unwrap();
-            println!("got response {}", response);
+            pipeline.read_sms(4, Some(send)).unwrap();
+
+            let (typ, response) = recv.recv().unwrap();
+            println!("got response {:?}:{}", typ,response);
 
             let mut lines = response.lines();
             lines.next().unwrap();

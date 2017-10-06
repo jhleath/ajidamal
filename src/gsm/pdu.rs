@@ -1,6 +1,7 @@
 extern crate chrono;
 
 use self::chrono::prelude::*;
+use super::errors::Error;
 use std::str;
 use std::num::ParseIntError;
 use nom::IResult;
@@ -42,10 +43,6 @@ enum Encoding {
 #[derive(Debug)]
 enum AddressType {
     International // 145
-}
-
-enum Error {
-    ParseError
 }
 
 fn u8_from_hex_str(data: &[u8]) -> Result<u8, Error> {
@@ -154,7 +151,7 @@ named_args!(decimal_octet_number(length: u8)<String>,
                 count!(decimal_octet, length as usize),
                 concat_strings));
 
-named!(parse_pdu<Message>,
+named!(pub parse_pdu<Message>,
        do_parse!(
            sc_length: hex_octet >>
            sc_address_type: map_res!(hex_octet, to_address_type) >>
@@ -201,7 +198,7 @@ impl Message {
     }
 }
 
-const gsm_masks: &[u8] = &[
+const GSM_MASKS: &[u8] = &[
     0b01111111, // 1
     0b00111111, // 2
     0b00011111, // 3
@@ -212,7 +209,7 @@ const gsm_masks: &[u8] = &[
     0b11111111, // 0
 ];
 
-const gsm_chars: &[char] = &[
+const GSM_CHARS: &[char] = &[
 //   0     1     2     3     4     5     6     7     8     9     A     B     C      D    E     F
     '@',  '£',  '$',  '¥',  'è',  'é',  'ù',  'ì',  'ò',  'Ç', '\n',  'Ø',  'ø', '\r',  'Å',  'å', // 0
     'Δ',  '_',  'Φ',  'Γ',  'Λ',  'Ω',  'Π',  'Ψ',  'Σ',  'Θ',  'Ξ',  '?',  'Æ',  'æ',  'ß',  'É', // 1
@@ -225,7 +222,7 @@ const gsm_chars: &[char] = &[
     
 ];
 
-fn parse_gsm_alphabet(pdu_string: &[u8], length: u8) -> Result<String, ()> {
+fn parse_gsm_alphabet(pdu_string: &[u8], length: u8) -> IResult<String, ()> {
     let mut parsed_octets = 0;
     let mut output = String::new();
     let mut rest = pdu_string;
@@ -234,7 +231,7 @@ fn parse_gsm_alphabet(pdu_string: &[u8], length: u8) -> Result<String, ()> {
     while parsed_octets < length {
         let parse_stage = parsed_octets % 8;
         if parse_stage == 7 {
-            output.push(gsm_chars[saved_byte as usize]);
+            output.push(GSM_CHARS[saved_byte as usize]);
             saved_byte = 0;
             parsed_octets += 1;
             continue;
@@ -242,10 +239,10 @@ fn parse_gsm_alphabet(pdu_string: &[u8], length: u8) -> Result<String, ()> {
 
         let (new_rest, next_byte) = hex_octet(rest).unwrap();
         rest = new_rest;
-        let character = (next_byte & gsm_masks[parse_stage as usize]) << parse_stage;
+        let character = (next_byte & GSM_MASKS[parse_stage as usize]) << parse_stage;
         
         output.push(gsm_chars[(character + saved_byte) as usize]);
-        saved_byte = (next_byte & !gsm_masks[parse_stage as usize]) >> (7 - parse_stage);
+        saved_byte = (next_byte & !GSM_MASKS[parse_stage as usize]) >> (7 - parse_stage);
         parsed_octets += 1;
     };
 

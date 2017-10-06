@@ -5,5 +5,7 @@ authors = ["Hunter Leath <h@hunterleath.com>"]
 
 [dependencies]
 serial = "0.4"
-nom = "^3.2"
 chrono = "0.4"
+
+[dependencies.nom]
+version = "^3.2"
