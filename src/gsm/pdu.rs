@@ -45,6 +45,12 @@ enum AddressType {
     International // 145
 }
 
+fn u16_from_hex_str(data: &[u8]) -> Result<u16, Error> {
+    str::from_utf8(data).or(Err(Error::ParseError)).and_then(|s| {
+        u16::from_str_radix(s, 16).or(Err(Error::ParseError))
+    })
+}
+
 fn u8_from_hex_str(data: &[u8]) -> Result<u8, Error> {
     str::from_utf8(data).or(Err(Error::ParseError)).and_then(|s| {
         u8::from_str_radix(s, 16).or(Err(Error::ParseError))
@@ -129,16 +135,20 @@ fn parse_date_time(mut data: String) -> Result<DateTime<Utc>, Error> {
     Ok(datetime)
 }
 
-fn parse_user_data(data: &[u8], encoding: Encoding, length: u8) -> UserData {
+fn parse_user_data(data: &[u8], encoding: Encoding, length: u8) -> IResult<&[u8], UserData> {
     match encoding {
-        Encoding::Gsm7Bit => UserData {
-            encoding: Encoding::Gsm7Bit,
-            data: parse_gsm_alphabet(data, length).unwrap(),
-        },
-        Encoding::Utf16 => UserData {
-            encoding: Encoding::Utf16,
-            data: parse_utf16(data).unwrap(),
-        }
+        Encoding::Gsm7Bit => parse_gsm_alphabet(data, length).map(|parsed_data| {
+            UserData {
+                encoding: Encoding::Gsm7Bit,
+                data: parsed_data,
+            }
+        }),
+        Encoding::Utf16 => parse_utf16(data, length as usize).map(|parsed_data| {
+            UserData {
+                encoding: Encoding::Utf16,
+                data: parsed_data,
+            }
+        })
     }
 }
 
@@ -164,7 +174,7 @@ named!(pub parse_pdu<Message>,
            encoding_scheme: map_res!(hex_octet, to_encoding_scheme) >>
            time_stamp: map_res!(apply!(decimal_octet_number, 7), parse_date_time) >>
            ud_length: hex_octet >>
-           user_data: call!(nom::rest) >>
+           user_data: apply!(parse_user_data, encoding_scheme, ud_length) >>
                
            (Message {
                service_center: Number {
@@ -178,7 +188,7 @@ named!(pub parse_pdu<Message>,
                },
                protocol_id: protocol_id,
                time_stamp: time_stamp,
-               user_data: parse_user_data(user_data, encoding_scheme, ud_length)
+               user_data: user_data,
            })
        )
 );
@@ -222,7 +232,7 @@ const GSM_CHARS: &[char] = &[
     
 ];
 
-fn parse_gsm_alphabet(pdu_string: &[u8], length: u8) -> IResult<String, ()> {
+fn parse_gsm_alphabet(pdu_string: &[u8], length: u8) -> IResult<&[u8], String> {
     let mut parsed_octets = 0;
     let mut output = String::new();
     let mut rest = pdu_string;
@@ -241,26 +251,27 @@ fn parse_gsm_alphabet(pdu_string: &[u8], length: u8) -> IResult<String, ()> {
         rest = new_rest;
         let character = (next_byte & GSM_MASKS[parse_stage as usize]) << parse_stage;
         
-        output.push(gsm_chars[(character + saved_byte) as usize]);
+        output.push(GSM_CHARS[(character + saved_byte) as usize]);
         saved_byte = (next_byte & !GSM_MASKS[parse_stage as usize]) >> (7 - parse_stage);
         parsed_octets += 1;
     };
 
-    Ok(output)
-}
-
-
-fn combine_u8s(data: &[u8]) -> Result<u16, ()> {
-    Ok(((data[0] as u16) << 8) + (data[1] as u16))
+    IResult::Done(rest, output)
 }
 
 named!(u8_vec_to_u16_vec < &[u8], Vec<u16> >, many0!(
-    map_res!(take!(2), combine_u8s)));
+    map_res!(take!(4), u16_from_hex_str)));
 
-fn parse_utf16(pdu_string: &[u8]) -> Result<String, ()> {
-    let utf16_str: Vec<u16> = u8_vec_to_u16_vec(pdu_string).to_result().unwrap();
+fn parse_utf16(data: &[u8], length: usize) -> IResult<&[u8], String> {
+    // length is in 16-bit groups, so we need to double it to get the full string
+    let u16_len = length*2;
+    if data.len() < u16_len {
+        return IResult::Incomplete(nom::Needed::Size(u16_len - data.len()))
+    }
+    
+    let utf16_str: Vec<u16> = u8_vec_to_u16_vec(&data[..u16_len]).to_result().unwrap();
     match String::from_utf16(utf16_str.as_ref()) {
-        Ok(s) => Ok(s),
-        Err(_) => Err(()),
+        Ok(s) => IResult::Done(&data[u16_len..], s),
+        Err(_) => IResult::Error(nom::ErrorKind::Custom(0))
     }
 }

@@ -5,7 +5,7 @@ use std::sync::mpsc;
 
 type RawCallback = mpsc::Sender<(CommandType, String)>;
 
-#[derive(Debug)]
+#[derive(PartialEq, Debug)]
 pub enum CommandType {
     Attention, // AT
     Hangup, // ATH
@@ -137,6 +137,6 @@ impl Pipeline {
     // MISSED_CALL: 09:21AM <NUM>
 }
 
-enum SMSStore {
+pub enum SMSStore {
     All = 4
 }

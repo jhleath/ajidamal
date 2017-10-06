@@ -4,6 +4,7 @@ use gsm::pdu::parse_pdu;
 
 use nom;
 
+#[derive(Debug)]
 pub enum ResponseCode {
     Ok = 0
 }
@@ -19,6 +20,7 @@ fn parse_response_code(data: &[u8]) -> Result<ResponseCode, super::errors::Error
     }
 }
 
+#[derive(Debug)]
 pub enum MessageStatus {
     ReceivedUnread = 0,
     ReceivedRead = 1,
@@ -40,17 +42,19 @@ fn parse_message_status(data: &[u8]) -> Result<MessageStatus, Error> {
     }
 }
 
+#[derive(Debug)]
 pub struct SMS {
     status: MessageStatus,
     message: gsm::pdu::Message,
 }
 
+#[derive(Debug)]
 pub struct ReadSMSResponse {
     sms: SMS,
     code: ResponseCode,
 }
 
-named!(parse_read_sms_response<ReadSMSResponse>, do_parse!(
+named!(pub parse_read_sms_response<ReadSMSResponse>, do_parse!(
     tag_s!("+CMGR: ") >>
     status: map_res!(take_until_and_consume!(","), parse_message_status) >>
     alpha: take_until_and_consume!(",") >>
