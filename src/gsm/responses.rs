@@ -1,3 +1,5 @@
+use std::str;
+
 use gsm;
 use gsm::errors::Error;
 use gsm::pdu::parse_pdu;
@@ -44,6 +46,7 @@ fn parse_message_status(data: &[u8]) -> Result<MessageStatus, Error> {
 
 #[derive(Debug)]
 pub struct SMS {
+    index: Option<u32>,
     status: MessageStatus,
     message: gsm::pdu::Message,
 }
@@ -64,6 +67,7 @@ named!(pub parse_read_sms_response<ReadSMSResponse>, do_parse!(
     code: map_res!(call!(nom::rest), parse_response_code) >>
     (ReadSMSResponse {
         sms: SMS {
+            index: None,
             status: status,
             message: pdu,
         },
@@ -71,7 +75,38 @@ named!(pub parse_read_sms_response<ReadSMSResponse>, do_parse!(
     })
 ));
 
+#[derive(Debug)]
 pub struct ListSMSResponse {
     sms: Vec<SMS>,
     code: ResponseCode,
 }
+
+fn hex_to_u32(data: &[u8]) -> Result<u32, Error> {
+    str::from_utf8(data).or(Err(Error::ParseError)).and_then(|s| {
+        u32::from_str_radix(s, 16).or(Err(Error::ParseError))
+    })
+}
+
+named!(pub parse_individual_sms_from_list<SMS>, do_parse!(
+    tag_s!("+CMGL: ") >>
+    index: map_res!(take_until_and_consume!(","), hex_to_u32) >>
+    status: map_res!(take_until_and_consume!(","), parse_message_status) >>
+    alpha: take_until_and_consume!(",") >>
+    length: take_until_and_consume!("\n") >>
+    pdu: parse_pdu >>
+    tag!("\n") >>
+    (SMS {
+        index: Some(index),
+        status: status,
+        message: pdu,
+    })
+));
+
+named!(pub parse_list_sms_response<ListSMSResponse>, do_parse!(
+    smses: many1!(parse_individual_sms_from_list) >>
+    code: map_res!(call!(nom::rest), parse_response_code) >>
+    (ListSMSResponse {
+        sms: smses,
+        code: ResponseCode::Ok,
+    })
+));

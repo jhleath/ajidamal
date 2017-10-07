@@ -32,17 +32,20 @@ pub struct Message {
 #[derive(Debug)]
 enum CommandType {
     SmsDeliver,
+    VoicemailUpdate
 }
 
 #[derive(Debug)]
 enum Encoding {
     Gsm7Bit,
     Utf16,
+    Unknown
 }
 
 #[derive(Debug)]
 enum AddressType {
-    International // 145
+    International, // 145
+    ShortCode, // 201
 }
 
 fn u16_from_hex_str(data: &[u8]) -> Result<u16, Error> {
@@ -76,7 +79,11 @@ fn concat_strings(data: Vec<String>) -> Result<String, Error> {
 }
 
 fn get_decimal_length(data: u8) -> Result<u8, Error> {
-    Ok((data / 2) + 1)
+    if data % 2 == 0 {
+        Ok(data / 2)
+    } else {
+        Ok((data / 2) + 1)
+    }
 }
 
 fn to_vec(data: &[u8]) -> Result<Vec<u8>, Error> {
@@ -86,7 +93,11 @@ fn to_vec(data: &[u8]) -> Result<Vec<u8>, Error> {
 fn to_command_type(data: u8) -> Result<CommandType, Error> {
     match data {
         4 => Ok(CommandType::SmsDeliver),
-        _ => Err(Error::ParseError)
+        64 => Ok(CommandType::VoicemailUpdate),
+        d => {
+            println!("got unexpected command type {:?}", d);
+            Err(Error::ParseError)
+        }
     }
 }
 
@@ -94,36 +105,76 @@ fn to_encoding_scheme(data: u8) -> Result<Encoding, Error> {
     match data {
         0 => Ok(Encoding::Gsm7Bit),
         8 => Ok(Encoding::Utf16),
-        _ => Err(Error::ParseError)
+        d => {
+            println!("got unexpected encoding scheme {:?}", d);
+            Err(Error::ParseError)
+        }
     }
 }
 
 fn to_address_type(data: u8) -> Result<AddressType, Error> {
     match data {
-        145 => Ok(AddressType::International),
-        _ => Err(Error::ParseError)
+        145 => Ok(AddressType::International), // International number + ISDN
+        201 => Ok(AddressType::ShortCode), // Subscriber  number + private numbering
+        d => {
+            println!("got unexpected address type {:?}", d);
+            Err(Error::ParseError)
+        }
     }
 }
 
-fn parse_date_time(mut data: String) -> Result<DateTime<Utc>, Error> {
+fn parse_ascii_hex_number(data: u8) -> i32 {
+    match data {
+        48 => 0,
+        49 => 1,
+        50 => 2,
+        51 => 3,
+        52 => 4,
+        53 => 5,
+        54 => 6,
+        55 => 7,
+        56 => 8,
+        57 => 9,
+        // uppercase
+        65 => 10,
+        66 => 11,
+        67 => 12,
+        68 => 13,
+        69 => 14,
+        70 => 15,
+        // lowercase
+        97 => 10,
+        98 => 11,
+        99 => 12,
+        100 => 13,
+        101 => 14,
+        102 => 15,
+        // failure
+        _ => 0,
+    }
+}
+
+fn parse_time_zone(mut zero: i32, mut one: i32) -> i32 {
+    let mut sign = 1;
+
+    // The third bit stores the sign information. If it is 1, then the
+    // time zone is negative. Ignore that bit and parse the number as
+    // usual.
+    if one & 0b1000 != 0 {
+        one = one & 0b0111;
+        sign = -1;
+    }
+    
+    sign * ((10 * one) + zero)
+}
+
+fn parse_date_time(tz_data: &[u8], mut data: String) -> Result<DateTime<Utc>, Error> {
     //yyMMddHHMMss
     let FORMAT_STRING: &str = "%y%m%d%H%M%S";
 
-    // First parse the time zone off the end of the string (last two
-    // digits).
-    let length: usize = data.len() - 2;
-    let mut time_zone: i32 = match data.split_off(length).parse() {
-        Ok(v) => v,
-        Err(_) => return Err(Error::ParseError)
-    };
+    let time_zone = parse_time_zone(parse_ascii_hex_number(tz_data[0]), parse_ascii_hex_number(tz_data[1]));
 
-    // Adjust time_zone for encoding scheme
-    if time_zone > 50 {
-        // Convert 96 to -4
-        time_zone = time_zone - 100;
-    }
-
-    let datetime = match FixedOffset::east(time_zone * 3600)
+    let datetime = match FixedOffset::east(time_zone * 900)
                                      .datetime_from_str(data.as_ref(), FORMAT_STRING) {
         Ok(d) => d.with_timezone(&Utc),
         Err(e) => {
@@ -148,7 +199,14 @@ fn parse_user_data(data: &[u8], encoding: Encoding, length: u8) -> IResult<&[u8]
                 encoding: Encoding::Utf16,
                 data: parsed_data,
             }
-        })
+        }),
+        Encoding::Unknown => {
+            IResult::Done(&data[length as usize..],
+                          UserData {
+                              encoding: Encoding::Unknown,
+                              data: format!("unknown encoding for data: {:?}", &data[..length as usize]),
+                          })
+        }
     }
 }
 
@@ -172,7 +230,8 @@ named!(pub parse_pdu<Message>,
            sender: apply!(decimal_octet_number, sender_length) >>
            protocol_id: hex_octet >>
            encoding_scheme: map_res!(hex_octet, to_encoding_scheme) >>
-           time_stamp: map_res!(apply!(decimal_octet_number, 7), parse_date_time) >>
+           time_stamp: apply!(decimal_octet_number, 6) >>
+           time_zone: take!(2) >>
            ud_length: hex_octet >>
            user_data: apply!(parse_user_data, encoding_scheme, ud_length) >>
                
@@ -187,7 +246,7 @@ named!(pub parse_pdu<Message>,
                    number: sender,
                },
                protocol_id: protocol_id,
-               time_stamp: time_stamp,
+               time_stamp: parse_date_time(time_zone, time_stamp).unwrap(),
                user_data: user_data,
            })
        )
