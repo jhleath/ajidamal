@@ -185,18 +185,6 @@ pub fn gsm_main() -> io::Result<()> {
 
             let (send, recv) = mpsc::channel();
 
-            let mut i = 0;
-            while i < 7 {
-                pipeline.read_sms(i, Some(send.clone())).unwrap();
-
-                let (typ, response) = recv.recv().unwrap();
-                assert!(typ == command::CommandType::ReadSMS);
-                println!("got response {:?}:{}", typ,response);
-                println!("parsing response {:?}", responses::parse_read_sms_response(response.as_bytes()));
-                
-                i += 1;
-            }
-
             pipeline.list_sms(command::SMSStore::All, Some(send)).unwrap();
 
             let (typ, response) = recv.recv().unwrap();

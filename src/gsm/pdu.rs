@@ -16,13 +16,14 @@ pub struct Number {
 #[derive(Debug)]
 pub struct UserData {
     encoding: Encoding,
-    data: String
+    data: String,
+    header: Option<bool>
 }
 
 #[derive(Debug)]
 pub struct Message {
     service_center: Number,
-    command_type: CommandType,
+    command_type: CommandInformation,
     sender: Number,
     time_stamp: DateTime<Utc>,
     protocol_id: u8,
@@ -30,9 +31,20 @@ pub struct Message {
 }
 
 #[derive(Debug)]
-enum CommandType {
-    SmsDeliver,
-    VoicemailUpdate
+struct CommandInformation {
+    message_type: MessageType,
+    more_messages_to_send: bool,
+    has_udh: bool,
+}
+
+#[derive(Debug)]
+enum MessageType {
+    SmsDeliverReport, // 0
+    SmsDeliver, // 0
+    SmsSubmit, // 1
+    SmsSubmitReport, // 1
+    SmsCommand, // 2
+    SmsStatusReport, // 2
 }
 
 #[derive(Debug)]
@@ -90,15 +102,46 @@ fn to_vec(data: &[u8]) -> Result<Vec<u8>, Error> {
     Ok(data.to_vec())
 }
 
-fn to_command_type(data: u8) -> Result<CommandType, Error> {
-    match data {
-        4 => Ok(CommandType::SmsDeliver),
-        64 => Ok(CommandType::VoicemailUpdate),
+// 1-0	TP-Message-Type-Indicator (TP-MTI)
+//   2	TP-More-Messages-to-Send (TP-MMS) in SMS-DELIVER (0 = more messages)
+//   2	TP-Reject-Duplicates (TP-RD) in SMS-SUBMIT
+//   3	TP-Loop-Prevention (TP-LP) in SMS-DELIVER and SMS-STATUS-REPORT
+// 4-3	TP-Validity-Period-Format (TP-VPF) in SMS-SUBMIT (00 = not present)
+//   5	TP-Status-Report-Indication (TP-SRI) in SMS-DELIVER
+//   5	TP-Status-Report-Request (TP-SRR) in SMS-SUBMIT and SMS-COMMAND
+//   5	TP-Status-Report-Qualifier (TP-SRQ) in SMS-STATUS-REPORT
+//   6	TP-User-Data-Header-Indicator (TP-UDHI)
+//   7	TP-Reply-Path (TP-RP) in SMS-DELIVER and SMS-SUBMIT
+
+fn to_command_information(data: u8) -> Result<CommandInformation, Error> {
+    let message_type = match data & 0b11 {
+        0 => MessageType::SmsDeliver,
+        1 => MessageType::SmsDeliver,
+        2 => MessageType::SmsSubmit,
+        3 => MessageType::SmsCommand,
         d => {
             println!("got unexpected command type {:?}", d);
-            Err(Error::ParseError)
+            return Err(Error::ParseError);
         }
-    }
+    };
+
+    let more_messages_to_send = match (data & 0b100) >> 2 {
+        0 => true,
+        1 => false,
+        _ => panic!("bit wasn't 0 or 1")
+    };
+
+    let has_udh = match (data & 0b1000000) >> 6 {
+        0 => false,
+        1 => true,
+        _ => panic!("bit wasn't 0 or 1")
+    };
+
+    Ok(CommandInformation{
+        message_type: message_type,
+        more_messages_to_send: more_messages_to_send,
+        has_udh: has_udh,
+    })
 }
 
 fn to_encoding_scheme(data: u8) -> Result<Encoding, Error> {
@@ -224,7 +267,7 @@ named!(pub parse_pdu<Message>,
            sc_length: hex_octet >>
            sc_address_type: map_res!(hex_octet, to_address_type) >>
            service_center: apply!(decimal_octet_number, sc_length - 1) >>
-           message_type: map_res!(hex_octet, to_command_type) >>
+           message_type: map_res!(hex_octet, to_command_information) >>
            sender_length: map_res!(hex_octet, get_decimal_length) >>
            sender_address_type: map_res!(hex_octet, to_address_type) >>    
            sender: apply!(decimal_octet_number, sender_length) >>
