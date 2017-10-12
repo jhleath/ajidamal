@@ -6,7 +6,7 @@ use gsm::pdu::parse_pdu;
 
 use nom;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum ResponseCode {
     Ok = 0
 }
@@ -77,8 +77,8 @@ named!(pub parse_read_sms_response<ReadSMSResponse>, do_parse!(
 
 #[derive(Debug)]
 pub struct ListSMSResponse {
-    sms: Vec<SMS>,
-    code: ResponseCode,
+    pub sms: Vec<SMS>,
+    pub code: ResponseCode,
 }
 
 fn hex_to_u32(data: &[u8]) -> Result<u32, Error> {

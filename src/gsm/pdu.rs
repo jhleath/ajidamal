@@ -10,7 +10,7 @@ use nom;
 #[derive(Debug)]
 pub struct Number {
     format: AddressType,
-    number: String,
+    pub number: String,
 }
 
 #[derive(Debug)]
@@ -21,9 +21,9 @@ pub struct HeaderEntry {
 
 #[derive(Debug)]
 pub struct ConcatenatedMessage {
-    reference_number: u8,
-    number_of_messages: u8,
-    sequence_number: u8,
+    pub reference_number: u8,
+    pub number_of_messages: u8,
+    pub sequence_number: u8,
 }
 
 named!(parse_concatenated_message<ConcatenatedMessage>,
@@ -41,7 +41,7 @@ named!(parse_concatenated_message<ConcatenatedMessage>,
 
 #[derive(Debug)]
 pub struct Header {
-    concatenated_message: Option<ConcatenatedMessage>,
+    pub concatenated_message: Option<ConcatenatedMessage>,
     entries: Vec<HeaderEntry>
 }
 
@@ -88,18 +88,18 @@ impl Header {
 #[derive(Debug)]
 pub struct UserData {
     encoding: Encoding,
-    data: String,
-    header: Option<Header>
+    pub data: String,
+    pub header: Option<Header>
 }
 
 #[derive(Debug)]
 pub struct Message {
     service_center: Number,
     command_type: CommandInformation,
-    sender: Number,
-    time_stamp: DateTime<Utc>,
+    pub sender: Number,
+    pub time_stamp: DateTime<Utc>,
     protocol_id: u8,
-    user_data: UserData,
+    pub user_data: UserData,
 }
 
 #[derive(Debug)]
@@ -334,10 +334,7 @@ fn parse_user_data(data: &[u8], encoding: Encoding, length: u8, has_udh: bool) -
     // on to the actual text.
     let (remaining, header) = if has_udh {
         match parse_user_header(data) {
-            IResult::Done(i, o) => {
-                println!("got header {:?}", o);
-                (i, o)
-            },
+            IResult::Done(i, o) => (i, o),
             IResult::Incomplete(n) => return IResult::Incomplete(n),
             IResult::Error(e) => return IResult::Error(e),
         }

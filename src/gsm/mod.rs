@@ -183,14 +183,17 @@ pub fn gsm_main() -> io::Result<()> {
             let pipeline = command::Pipeline::new(phone.command_sender.clone());
             pipeline.attention(None).unwrap();
 
-            let (send, recv) = mpsc::channel();
+            // let (send, recv) = mpsc::channel();
 
-            pipeline.list_sms(command::SMSStore::All, Some(send)).unwrap();
+            // pipeline.list_sms(command::SMSStore::All, Some(send)).unwrap();
 
-            let (typ, response) = recv.recv().unwrap();
-            assert!(typ == command::CommandType::ListSMS);
-            println!("got response {:?}:{}", typ,response);
-            println!("parsing response {:?}", responses::parse_list_sms_response(response.as_bytes()));
+            // let (typ, response) = recv.recv().unwrap();
+            // assert!(typ == command::CommandType::ListSMS);
+            // println!("got response {:?}:{}", typ,response);
+            // println!("parsing response {:?}", responses::parse_list_sms_response(response.as_bytes()));
+
+            let mut sms_manager = sms::MessagingManager::new(pipeline);
+            sms_manager.load_text_messages().unwrap();
 
             phone.exit();
             Ok(())
