@@ -3,7 +3,7 @@ extern crate chrono;
 use self::chrono::prelude::*;
 use super::errors::Error;
 use std::str;
-use std::num::ParseIntError;
+use std::mem;
 use nom::IResult;
 use nom;
 
@@ -14,10 +14,82 @@ pub struct Number {
 }
 
 #[derive(Debug)]
+pub struct HeaderEntry {
+    tag: u8,
+    data: Vec<u8>,
+}
+
+#[derive(Debug)]
+pub struct ConcatenatedMessage {
+    reference_number: u8,
+    number_of_messages: u8,
+    sequence_number: u8,
+}
+
+named!(parse_concatenated_message<ConcatenatedMessage>,
+       do_parse!(
+           reference_number: map_res!(take!(2), u8_from_hex_str) >>
+           number_of_messages: map_res!(take!(2), u8_from_hex_str) >>
+           sequence_number: map_res!(take!(2), u8_from_hex_str) >>
+           (ConcatenatedMessage {
+               reference_number: reference_number,
+               number_of_messages: number_of_messages,
+               sequence_number: sequence_number,
+           })
+       )
+);
+
+#[derive(Debug)]
+pub struct Header {
+    concatenated_message: Option<ConcatenatedMessage>,
+    entries: Vec<HeaderEntry>
+}
+
+impl Header {
+    fn new() -> Header {
+        Header {
+            concatenated_message: None,
+            entries: Vec::new(),
+
+        }
+    }
+
+    fn set_entries(mut self, entries: Vec<HeaderEntry>) -> Self {
+        self.entries = entries;
+        self
+    }
+
+    fn parse_entries(&mut self) {
+        let entries = mem::replace(&mut self.entries, Vec::new()).into_iter();
+
+        for entry in entries.into_iter() {
+            match entry.tag {
+                0 => {
+                    match parse_concatenated_message(&entry.data) {
+                        IResult::Done(r, o) => {
+                            self.concatenated_message.get_or_insert(o);
+                            continue
+                        },
+                        a => {
+                            println!("got failure parsing IEI {}: {:?}", entry.tag, a);
+                        }
+                    };
+
+                    self.entries.push(entry);
+                },
+                _  => {
+                    self.entries.push(entry);
+                },
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct UserData {
     encoding: Encoding,
     data: String,
-    header: Option<bool>
+    header: Option<Header>
 }
 
 #[derive(Debug)]
@@ -207,7 +279,7 @@ fn parse_time_zone(mut zero: i32, mut one: i32) -> i32 {
         one = one & 0b0111;
         sign = -1;
     }
-    
+
     sign * ((10 * one) + zero)
 }
 
@@ -229,25 +301,81 @@ fn parse_date_time(tz_data: &[u8], mut data: String) -> Result<DateTime<Utc>, Er
     Ok(datetime)
 }
 
-fn parse_user_data(data: &[u8], encoding: Encoding, length: u8) -> IResult<&[u8], UserData> {
+fn parse_length(data: &[u8]) -> Result<u8, Error> {
+    match u8_from_hex_str(data) {
+        Ok(l) => Ok(2 * l),
+        Err(e) => Err(e),
+    }
+}
+
+named!(parse_iei_reserved<HeaderEntry>,
+       dbg_dmp!( do_parse!(
+           tag: map_res!(take!(2), u8_from_hex_str) >>
+           data: map_res!(length_value!(map_res!(take!(2), parse_length),
+                               nom::rest), to_vec) >>
+           (HeaderEntry {
+               tag: tag,
+               data: data,
+           })
+       )));
+
+named!(parse_user_header < Option < Header > > ,
+       dbg_dmp!( do_parse!(
+           entries: length_value!(map_res!(take!(2), parse_length),
+                                  many0!(parse_iei_reserved)) >>
+           (Some(Header::new().set_entries(entries)))
+       ))
+);
+
+fn parse_user_data(data: &[u8], encoding: Encoding, length: u8, has_udh: bool) -> IResult<&[u8], UserData> {
+    let original_len = data.len();
+
+    // If the user data contains a UDH, then parse that before moving
+    // on to the actual text.
+    let (remaining, header) = if has_udh {
+        match parse_user_header(data) {
+            IResult::Done(i, o) => {
+                println!("got header {:?}", o);
+                (i, o)
+            },
+            IResult::Incomplete(n) => return IResult::Incomplete(n),
+            IResult::Error(e) => return IResult::Error(e),
+        }
+    } else {
+        (data, None)
+    };
+
+    let header = header.map(|mut e| {
+        e.parse_entries();
+        e
+    });
+
+    // Should have parsed an even number of u8s since the header would
+    // be in octets.
+    let parsed_octets = (original_len - remaining.len()) / 2;
+    let remaining_length = length as usize - parsed_octets;
+
     match encoding {
-        Encoding::Gsm7Bit => parse_gsm_alphabet(data, length).map(|parsed_data| {
+        Encoding::Gsm7Bit => parse_gsm_alphabet(remaining, remaining_length).map(|parsed_data| {
             UserData {
                 encoding: Encoding::Gsm7Bit,
                 data: parsed_data,
+                header: header,
             }
         }),
-        Encoding::Utf16 => parse_utf16(data, length as usize).map(|parsed_data| {
+        Encoding::Utf16 => parse_utf16(remaining, remaining_length).map(|parsed_data| {
             UserData {
                 encoding: Encoding::Utf16,
                 data: parsed_data,
+                header: header,
             }
         }),
         Encoding::Unknown => {
-            IResult::Done(&data[length as usize..],
+            IResult::Done(&remaining[remaining_length..],
                           UserData {
                               encoding: Encoding::Unknown,
                               data: format!("unknown encoding for data: {:?}", &data[..length as usize]),
+                              header: header,
                           })
         }
     }
@@ -269,15 +397,15 @@ named!(pub parse_pdu<Message>,
            service_center: apply!(decimal_octet_number, sc_length - 1) >>
            message_type: map_res!(hex_octet, to_command_information) >>
            sender_length: map_res!(hex_octet, get_decimal_length) >>
-           sender_address_type: map_res!(hex_octet, to_address_type) >>    
+           sender_address_type: map_res!(hex_octet, to_address_type) >>
            sender: apply!(decimal_octet_number, sender_length) >>
            protocol_id: hex_octet >>
            encoding_scheme: map_res!(hex_octet, to_encoding_scheme) >>
            time_stamp: apply!(decimal_octet_number, 6) >>
            time_zone: take!(2) >>
            ud_length: hex_octet >>
-           user_data: apply!(parse_user_data, encoding_scheme, ud_length) >>
-               
+           user_data: apply!(parse_user_data, encoding_scheme, ud_length, message_type.has_udh) >>
+
            (Message {
                service_center: Number {
                    format: sc_address_type,
@@ -331,10 +459,10 @@ const GSM_CHARS: &[char] = &[
     'P',  'Q',  'R',  'S',  'T',  'U',  'V',  'W',  'X',  'Y',  'Z',  'Ä',  'Ö',  'Ñ',  'Ü',  '§', // 5
     '¿',  'a',  'b',  'c',  'd',  'e',  'f',  'g',  'h',  'i',  'j',  'k',  'l',  'm',  'n',  'o', // 6
     'p',  'q',  'r',  's',  't',  'u',  'v',  'w',  'x',  'y',  'z',  'ä',  'ö',  'ñ',  'ü',  'à'  // 7
-    
+
 ];
 
-fn parse_gsm_alphabet(pdu_string: &[u8], length: u8) -> IResult<&[u8], String> {
+fn parse_gsm_alphabet(pdu_string: &[u8], length: usize) -> IResult<&[u8], String> {
     let mut parsed_octets = 0;
     let mut output = String::new();
     let mut rest = pdu_string;
@@ -352,7 +480,7 @@ fn parse_gsm_alphabet(pdu_string: &[u8], length: u8) -> IResult<&[u8], String> {
         let (new_rest, next_byte) = hex_octet(rest).unwrap();
         rest = new_rest;
         let character = (next_byte & GSM_MASKS[parse_stage as usize]) << parse_stage;
-        
+
         output.push(GSM_CHARS[(character + saved_byte) as usize]);
         saved_byte = (next_byte & !GSM_MASKS[parse_stage as usize]) >> (7 - parse_stage);
         parsed_octets += 1;
@@ -370,7 +498,7 @@ fn parse_utf16(data: &[u8], length: usize) -> IResult<&[u8], String> {
     if data.len() < u16_len {
         return IResult::Incomplete(nom::Needed::Size(u16_len - data.len()))
     }
-    
+
     let utf16_str: Vec<u16> = u8_vec_to_u16_vec(&data[..u16_len]).to_result().unwrap();
     match String::from_utf16(utf16_str.as_ref()) {
         Ok(s) => IResult::Done(&data[u16_len..], s),
