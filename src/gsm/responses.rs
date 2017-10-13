@@ -48,7 +48,7 @@ fn parse_message_status(data: &[u8]) -> Result<MessageStatus, Error> {
 pub struct SMS {
     index: Option<u32>,
     status: MessageStatus,
-    message: gsm::pdu::Message,
+    pub message: gsm::pdu::Message,
 }
 
 #[derive(Debug)]
