@@ -8,7 +8,7 @@ use nom::IResult;
 use nom;
 
 //yyMMddHHMMss
- static DATETIME_FORMAT_STRING: &'static str = "%y%m%d%H%M%S";
+const DATETIME_FORMAT_STRING: &'static str = "%y%m%d%H%M%S";
 
 #[derive(Debug)]
 pub struct Number {
@@ -93,6 +93,77 @@ pub struct UserData {
     encoding: Encoding,
     pub data: String,
     pub header: Option<Header>
+}
+
+#[derive(Debug, PartialEq)]
+pub enum ValidityPeriod {
+    // Only relative validity periods are supported right now.
+    // NotPresent, // 0 0
+    Relative(u8), // 1 0
+    // Enhanced, // 0 1
+    // Absolute, // 1 1
+}
+
+#[derive(Debug)]
+pub struct MessageSubmit {
+    command_type: CommandInformation,
+    message_reference: u8,
+    destination_address: Number,
+    protocol_id: u8,
+    user_data: UserData,
+}
+
+impl MessageSubmit {
+    // Actually, we can get a new message reference with this vendor
+    // by issuing AT+CMGENREF. Unclear if this standard functionality.
+
+    pub fn new_default(reject_duplicates: bool, status_report_request: bool, message_reference: u8,
+                       destination_address: Number, user_data: UserData) -> MessageSubmit {
+        // Plain MO-MT messages have PID=0.
+        Self::new(reject_duplicates, ValidityPeriod::Relative(255), status_report_request, /*reply_path=*/false,
+                  message_reference, destination_address, /*protocol_id=*/0, user_data)
+    }
+
+    pub fn new(reject_duplicates: bool, validity_period: ValidityPeriod, status_report_request: bool, reply_path: bool,
+               message_reference: u8, destination_address: Number, protocol_id: u8, user_data: UserData) -> MessageSubmit {
+        // TOOD: Add support for rejecting duplicates (which is set
+        // whenever the mobile automatically resends a message that
+        // failed).
+        assert!(!reject_duplicates);
+
+        // Not quite sure what to do with the validity period
+        // thing. Right now, only support TP-VP (relative format). The
+        // supposition is to just set this to 255 (the maximum allowed
+        // value).
+        assert!(validity_period == ValidityPeriod::Relative(255));
+
+        // TOOD: Add support for status reports.
+        assert!(!status_report_request);
+
+        // The internet seems to say that support for reply paths is
+        // tenuous at best and is merely part of a plan to
+        // reverse-charge for replies to this message. Let's not
+        // support it.
+        assert!(!reply_path);
+
+        MessageSubmit {
+            command_type: CommandInformation {
+                message_type: MessageType::SmsSubmit,
+                more_messages_to_send: false,
+                has_udh: false,
+            },
+            protocol_id: protocol_id,
+            message_reference: message_reference,
+            destination_address: destination_address,
+            user_data: user_data
+        }
+    }
+
+    pub fn serialize_to_pdu() -> Vec<u8> {
+        // PDU is an ascii format, so we have to first serialize to an
+        // ascii string, then get those bytes out.
+        Vec::new()
+    }
 }
 
 #[derive(Debug)]
@@ -502,4 +573,10 @@ fn parse_utf16(data: &[u8], length: usize) -> IResult<&[u8], String> {
         Ok(s) => IResult::Done(&data[u16_len..], s),
         Err(_) => IResult::Error(nom::ErrorKind::Custom(0))
     }
+}
+
+#[cfg(test)]
+mod test {
+    // TODO: Write some tests so that I don't have to worry so much
+    // about regressions here.
 }
