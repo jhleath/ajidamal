@@ -14,7 +14,8 @@ pub enum CommandType {
     OperatorSelect, // AT+COPS
     NetworkSystemMode,
     ReadSMS,
-    ListSMS
+    ListSMS,
+    SendSMS
 }
 
 type CommandIssueResult = Result<(), mpsc::SendError<RawCommand>>;
@@ -59,7 +60,7 @@ impl Pipeline {
     fn send_command(&self, cmd: RawCommand) -> CommandIssueResult {
         self.phone.send(cmd)
     }
-    
+
     pub fn attention(&self, sender: Option<RawCallback>) -> CommandIssueResult {
         self.send_command(RawCommand {
             bytes: "AT".as_bytes().to_vec(),
@@ -131,6 +132,29 @@ impl Pipeline {
             write_cr: true,
             sender: sender,
             command_type: CommandType::ListSMS,
+        })
+    }
+
+    pub fn send_sms(&self, data: Vec<u8>, sender: Option<RawCallback>) -> CommandIssueResult {
+        let string_command = String::from_utf8(data).unwrap();
+        println!("sending sms command {}", string_command);
+
+        self.send_command(RawCommand {
+            bytes: format!("AT+CMGS={}\r", string_command.len()).as_bytes().to_vec(),
+            write_cr: false,
+            sender: None,
+            command_type: CommandType::SendSMS,
+        }).unwrap();
+
+        // Wait some time
+        use std;
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        self.send_command(RawCommand {
+            bytes: format!("{}\u{001a}", string_command).as_bytes().to_vec(),
+            write_cr: false,
+            sender: sender,
+            command_type: CommandType::SendSMS,
         })
     }
     // Ringing: 2

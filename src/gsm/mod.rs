@@ -95,11 +95,13 @@ impl TTYPhone {
 
                     match Self::try_read_from_serial_port(&mut reader) {
                         Ok(data) => {
-                            if data[0] != 10 {
-                                response = String::new();
-                            }
+                            if data.len() > 0 {
+                                if data[0] != 10 {
+                                    response = String::new();
+                                }
 
-                            response += &String::from_utf8(data).expect("Invalid UTF-8")
+                                response += &String::from_utf8(data).expect("Invalid UTF-8")
+                            }
                         },
 
                         Err(e) => if e.kind() == io::ErrorKind::TimedOut {
@@ -190,8 +192,16 @@ pub fn gsm_main() -> io::Result<()> {
             // println!("got response {:?}:{}", typ,response);
             // println!("parsing response {:?}", responses::parse_list_sms_response(response.as_bytes()));
 
-            let mut sms_manager = sms::MessagingManager::new(pipeline);
-            sms_manager.load_text_messages().unwrap();
+            // let mut sms_manager = sms::MessagingManager::new(pipeline);
+            // sms_manager.load_text_messages().unwrap();
+
+            let new_pdu = pdu::MessageSubmit::new_default(/*reject_duplicates=*/false, /*status_report_request=*/false,
+                                                          pdu::Number::new_international(String::from("11234567890")),
+                                                          pdu::UserData::new_utf16(String::from("test test")))
+                .serialize_to_pdu();
+            println!("created pdu {}", String::from_utf8(new_pdu.clone()).unwrap());
+
+            pipeline.send_sms(new_pdu, None).unwrap();
 
             phone.exit();
             Ok(())

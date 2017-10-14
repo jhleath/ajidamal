@@ -11,9 +11,91 @@ use nom;
 const DATETIME_FORMAT_STRING: &'static str = "%y%m%d%H%M%S";
 
 #[derive(Debug)]
+enum AddressType {
+    International, // 145
+    ShortCode, // 201
+}
+
+#[derive(Debug)]
 pub struct Number {
     format: AddressType,
     pub number: String,
+}
+
+impl Number {
+    pub fn new_international(number: String) -> Number {
+        Number {
+            format: AddressType::International,
+            number: number,
+        }
+    }
+
+    fn serialize_to_pdu(&self, output: &mut Vec<u8>) {
+        // Serialize the address-length
+        let original_len = self.number.len() as u8;
+        let mut length = original_len;
+        let odd = length % 2 == 1;
+        if odd {
+            length += 1;
+        }
+
+        u8_to_hex(length, output);
+
+        match self.format {
+            AddressType::International => u8_to_hex(145, output),
+            ref d => panic!("serialization not supported for address type {:?}", d)
+        }
+
+        let bytes = self.number.as_bytes();
+        let mut seen: u8 = 0;
+        while seen < original_len {
+            if seen + 1 == original_len && odd {
+                output.push(b'F');
+            } else {
+                output.push(bytes[(seen + 1) as usize]);
+            }
+
+            output.push(bytes[seen as usize]);
+
+            seen += 2;
+        }
+    }
+}
+
+fn str_to_ascii(data: &str) -> u8 {
+    assert!(data.len() == 1);
+    data.as_bytes()[0]
+}
+
+fn u4_to_hex(data: u8) -> u8 {
+    assert!(data <= 15);
+    match data {
+        0 => b'0',
+        1 => b'1',
+        2 => b'2',
+        3 => b'3',
+        4 => b'4',
+        5 => b'5',
+        6 => b'6',
+        7 => b'7',
+        8 => b'8',
+        9 => b'9',
+        10 => b'A',
+        11 => b'B',
+        12 => b'C',
+        13 => b'D',
+        14 => b'E',
+        15 => b'F',
+        _ => unreachable!()
+    }
+}
+
+fn u8_to_hex(data: u8, output: &mut Vec<u8>) {
+    let lower = data >> 4;
+    let upper = data & 0b00001111;
+
+    output.push(u4_to_hex(lower));
+    output.push(u4_to_hex(upper));
 }
 
 #[derive(Debug)]
@@ -95,6 +177,32 @@ pub struct UserData {
     pub header: Option<Header>
 }
 
+impl UserData {
+    pub fn new_utf16(data: String) -> UserData {
+        UserData {
+            encoding: Encoding::Utf16,
+            data: data,
+            header: None,
+        }
+    }
+
+    fn serialize_to_pdu(&self, output: &mut Vec<u8>) {
+        assert!(self.header.is_none());
+        assert!(self.encoding == Encoding::Utf16);
+
+        let mut intermediate_output: Vec<u8> = Vec::new();
+        let mut length = 0;
+        for byte in self.data.encode_utf16() {
+            u8_to_hex((byte >> 8) as u8, &mut intermediate_output);
+            u8_to_hex((byte & 0b11111111) as u8, &mut intermediate_output);
+            length += 2;
+        }
+
+        u8_to_hex(length as u8, output);
+        output.extend(intermediate_output.into_iter());
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub enum ValidityPeriod {
     // Only relative validity periods are supported right now.
@@ -107,6 +215,7 @@ pub enum ValidityPeriod {
 #[derive(Debug)]
 pub struct MessageSubmit {
     command_type: CommandInformation,
+    reject_duplicates: bool,
     message_reference: u8,
     destination_address: Number,
     protocol_id: u8,
@@ -117,20 +226,15 @@ impl MessageSubmit {
     // Actually, we can get a new message reference with this vendor
     // by issuing AT+CMGENREF. Unclear if this standard functionality.
 
-    pub fn new_default(reject_duplicates: bool, status_report_request: bool, message_reference: u8,
+    pub fn new_default(reject_duplicates: bool, status_report_request: bool,
                        destination_address: Number, user_data: UserData) -> MessageSubmit {
         // Plain MO-MT messages have PID=0.
         Self::new(reject_duplicates, ValidityPeriod::Relative(255), status_report_request, /*reply_path=*/false,
-                  message_reference, destination_address, /*protocol_id=*/0, user_data)
+                  destination_address, /*protocol_id=*/0, user_data)
     }
 
     pub fn new(reject_duplicates: bool, validity_period: ValidityPeriod, status_report_request: bool, reply_path: bool,
-               message_reference: u8, destination_address: Number, protocol_id: u8, user_data: UserData) -> MessageSubmit {
-        // TOOD: Add support for rejecting duplicates (which is set
-        // whenever the mobile automatically resends a message that
-        // failed).
-        assert!(!reject_duplicates);
-
+               destination_address: Number, protocol_id: u8, user_data: UserData) -> MessageSubmit {
         // Not quite sure what to do with the validity period
         // thing. Right now, only support TP-VP (relative format). The
         // supposition is to just set this to 255 (the maximum allowed
@@ -146,23 +250,53 @@ impl MessageSubmit {
         // support it.
         assert!(!reply_path);
 
+        assert!(user_data.encoding == Encoding::Utf16);
+
         MessageSubmit {
             command_type: CommandInformation {
                 message_type: MessageType::SmsSubmit,
                 more_messages_to_send: false,
                 has_udh: false,
             },
+            reject_duplicates: reject_duplicates,
             protocol_id: protocol_id,
-            message_reference: message_reference,
+            message_reference: 0,
             destination_address: destination_address,
             user_data: user_data
         }
     }
 
-    pub fn serialize_to_pdu() -> Vec<u8> {
-        // PDU is an ascii format, so we have to first serialize to an
-        // ascii string, then get those bytes out.
-        Vec::new()
+    pub fn serialize_to_pdu(&self) -> Vec<u8> {
+        // The first octet of the message contains the following bits:
+        // 0/1 - MTI (set to 01 for SMS-SUBMIT)
+        // 2 - Reject duplicates
+        // 3/4 - Validity period format (set to 10 for relative)
+        // 5 - Status report request (set to 0 for these messages)
+        // 6 - User data header indicator (set to 0 for no header)
+        // 7 - Reply path (set to 0)
+
+        let mut first_octet: u8 = 0b00_01_00_01;
+        if self.reject_duplicates {
+            first_octet |= 0b1 << 2;
+        }
+
+        let mut output: Vec<u8> = Vec::new();
+        u8_to_hex(first_octet, &mut output);
+        u8_to_hex(0, &mut output);
+
+        self.destination_address.serialize_to_pdu(&mut output);
+
+        u8_to_hex(self.protocol_id, &mut output);
+
+        // Encoding the data coding scheme as Utf16
+        u8_to_hex(8, &mut output);
+
+        // Serialize the validity period as 255
+        u8_to_hex(0xFF, &mut output);
+
+        self.user_data.serialize_to_pdu(&mut output);
+
+        output
     }
 }
 
@@ -193,17 +327,11 @@ enum MessageType {
     SmsStatusReport, // 2
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum Encoding {
     Gsm7Bit,
     Utf16,
     Unknown
-}
-
-#[derive(Debug)]
-enum AddressType {
-    International, // 145
-    ShortCode, // 201
 }
 
 fn u16_from_hex_str(data: &[u8]) -> Result<u16, Error> {
