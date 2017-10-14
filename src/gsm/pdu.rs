@@ -7,6 +7,9 @@ use std::mem;
 use nom::IResult;
 use nom;
 
+//yyMMddHHMMss
+ static DATETIME_FORMAT_STRING: &'static str = "%y%m%d%H%M%S";
+
 #[derive(Debug)]
 pub struct Number {
     format: AddressType,
@@ -66,7 +69,7 @@ impl Header {
             match entry.tag {
                 0 => {
                     match parse_concatenated_message(&entry.data) {
-                        IResult::Done(r, o) => {
+                        IResult::Done(_, o) => {
                             self.concatenated_message.get_or_insert(o);
                             continue
                         },
@@ -269,7 +272,7 @@ fn parse_ascii_hex_number(data: u8) -> i32 {
     }
 }
 
-fn parse_time_zone(mut zero: i32, mut one: i32) -> i32 {
+fn parse_time_zone(zero: i32, mut one: i32) -> i32 {
     let mut sign = 1;
 
     // The third bit stores the sign information. If it is 1, then the
@@ -283,14 +286,12 @@ fn parse_time_zone(mut zero: i32, mut one: i32) -> i32 {
     sign * ((10 * one) + zero)
 }
 
-fn parse_date_time(tz_data: &[u8], mut data: String) -> Result<DateTime<Utc>, Error> {
-    //yyMMddHHMMss
-    let FORMAT_STRING: &str = "%y%m%d%H%M%S";
+fn parse_date_time(tz_data: &[u8], data: String) -> Result<DateTime<Utc>, Error> {
 
     let time_zone = parse_time_zone(parse_ascii_hex_number(tz_data[0]), parse_ascii_hex_number(tz_data[1]));
 
     let datetime = match FixedOffset::east(time_zone * 900)
-                                     .datetime_from_str(data.as_ref(), FORMAT_STRING) {
+                                     .datetime_from_str(data.as_ref(), DATETIME_FORMAT_STRING) {
         Ok(d) => d.with_timezone(&Utc),
         Err(e) => {
             println!("Got {:?} parsing the datetime", e);
@@ -423,10 +424,10 @@ named!(pub parse_pdu<Message>,
 impl Message {
     pub fn from_string(pdu_string: String) -> Result<Message, ()> {
         match parse_pdu(pdu_string.as_bytes()) {
-            IResult::Done(rest, m) => {
+            IResult::Done(_, m) => {
                 Ok(m)
             },
-            IResult::Error(e) => Err(()),
+            IResult::Error(_) => Err(()),
             IResult::Incomplete(n) => {
                 println!("incomplete? {:?}", n);
                 Err(())

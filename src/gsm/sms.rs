@@ -48,10 +48,6 @@ impl PartialMessage {
         }
     }
 
-    fn get_hash_string(&self) -> String {
-        get_hash_for_message(&self.sender, self.reference_number)
-    }
-
     fn add_part(mut self, part_index: u8, msg: gsm::pdu::Message) -> AdditionResult {
         assert!(1 <= part_index && part_index <= self.total_parts);
         self.contents[(part_index - 1) as usize].get_or_insert(msg.user_data.data);
@@ -106,9 +102,13 @@ impl MessagingManager {
                                                             concatenated_message.reference_number);
 
                         match partial_messages.remove(&msg_hash) {
-                            Some(pm) => match pm.add_part(concatenated_message.sequence_number, message.message) {
+                            Some(pm) => {
+                                assert!(concatenated_message.reference_number == pm.reference_number);
+                                match pm.add_part(concatenated_message.sequence_number, message.message) {
+
                                 AdditionResult::Complete(msg) => { parsed_messages.push(msg); },
                                 AdditionResult::Incomplete(pm_new) => { partial_messages.insert(msg_hash, pm_new); }
+                                }
                             },
                             None => { partial_messages.insert(msg_hash,
                                                             PartialMessage::new(concatenated_message.reference_number,

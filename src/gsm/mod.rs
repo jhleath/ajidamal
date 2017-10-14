@@ -14,8 +14,6 @@ use std::time::Duration;
 
 const GSM_SERIAL_PORT: &'static str = "/dev/ttyAMA0";
 
-const TEST_PHONE_NUMBER: &'static str = "+11234567890";
-
 // This is the amount of time that the event thread spends waiting for
 // responses from the GSM radio. This will bound how long it takes for
 // a command to actually get send to the module.
@@ -135,7 +133,7 @@ impl TTYPhone {
             })
     }
 
-    fn configure_serial_port<T: serial::SerialPort>(mut port: &mut T) -> io::Result<()> {
+    fn configure_serial_port<T: serial::SerialPort>(port: &mut T) -> io::Result<()> {
         // Configure the port
         try!(port.reconfigure(&|settings| {
             try!(settings.set_baud_rate(serial::Baud115200));
@@ -146,7 +144,7 @@ impl TTYPhone {
         Ok(())
     }
 
-    fn try_read_from_serial_port<T: serial::SerialPort>(mut reader: &mut BufReader<T>) -> io::Result<Vec<u8>> {
+    fn try_read_from_serial_port<T: serial::SerialPort>(reader: &mut BufReader<T>) -> io::Result<Vec<u8>> {
         let mut response_buffer: Vec<u8> = Vec::new();
 
         match reader.read_until(b'\r', &mut response_buffer) {
@@ -162,7 +160,7 @@ impl TTYPhone {
         }
     }
 
-    fn write_command_to_serial_port<T: serial::SerialPort>(mut port: &mut T, cmd: &command::RawCommand) -> io::Result<()> {
+    fn write_command_to_serial_port<T: serial::SerialPort>(port: &mut T, cmd: &command::RawCommand) -> io::Result<()> {
         let sending_bytes = cmd.render();
         println!("Going to send {:?}.", sending_bytes);
         try!(port.write(sending_bytes.as_ref()));
