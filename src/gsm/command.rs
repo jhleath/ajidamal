@@ -140,8 +140,8 @@ impl Pipeline {
         println!("sending sms command {}", string_command);
 
         self.send_command(RawCommand {
-            bytes: format!("AT+CMGS={}\r", string_command.len()).as_bytes().to_vec(),
-            write_cr: false,
+            bytes: format!("AT+CMGS={}", string_command.len() / 2).as_bytes().to_vec(),
+            write_cr: true,
             sender: None,
             command_type: CommandType::SendSMS,
         }).unwrap();

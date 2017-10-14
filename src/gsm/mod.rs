@@ -59,7 +59,7 @@ impl TTYPhone {
         thread::Builder::new().name("gsm_evt".to_string()).spawn(
             move || {
                 // TODO: [hleath 2017-09-30] Use Async IO.
-                
+
                 // TODO: [hleath 2017-09-24] This thread really
                 // shouldn't ever return with an error. It should
                 // attempt to recover or take the program down.
@@ -105,8 +105,8 @@ impl TTYPhone {
                         },
 
                         Err(e) => if e.kind() == io::ErrorKind::TimedOut {
+                            // Send response back to the Command.
                             if response.len() > 0 {
-                                // Send response back to the Command.
                                 match cmd.and_then(|f| f.get_callback() ) {
                                     Some((command_type, sender)) => sender.send((command_type, response)).ok(),
                                     None => {
@@ -114,10 +114,10 @@ impl TTYPhone {
                                         None
                                     },
                                 };
-
-                                response = String::new();
-                                cmd = None
                             }
+
+                            response = String::new();
+                            cmd = None
 
                             // Without a processing response, there is
                             // nothing to do during a timeout.
@@ -195,9 +195,13 @@ pub fn gsm_main() -> io::Result<()> {
             // let mut sms_manager = sms::MessagingManager::new(pipeline);
             // sms_manager.load_text_messages().unwrap();
 
+            // TODO: look up the SMSC first so that it can be included
+            // in the command. Not including the SMSC works, but seems
+            // to take a _really_ long time to actually send the
+            // message.
             let new_pdu = pdu::MessageSubmit::new_default(/*reject_duplicates=*/false, /*status_report_request=*/false,
                                                           pdu::Number::new_international(String::from("11234567890")),
-                                                          pdu::UserData::new_utf16(String::from("test test")))
+                                                          pdu::UserData::new_utf16(String::from("this message hi")))
                 .serialize_to_pdu();
             println!("created pdu {}", String::from_utf8(new_pdu.clone()).unwrap());
 
