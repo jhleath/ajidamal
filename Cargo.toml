@@ -6,6 +6,8 @@ authors = ["Hunter Leath <h@hunterleath.com>"]
 [dependencies]
 serial = "0.4"
 chrono = "0.4"
+futures = "0.1.14"
+hyper = "0.11"
 
 [dependencies.nom]
 version = "^3.2"

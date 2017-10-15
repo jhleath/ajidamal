@@ -199,6 +199,8 @@ pub fn gsm_main() -> io::Result<()> {
             // in the command. Not including the SMSC works, but seems
             // to take a _really_ long time to actually send the
             // message.
+            pipeline.get_smsc(/*sender=*/None).unwrap();
+
             let new_pdu = pdu::MessageSubmit::new_default(/*reject_duplicates=*/false, /*status_report_request=*/false,
                                                           pdu::Number::new_international(String::from("11234567890")),
                                                           pdu::UserData::new_utf16(String::from("this message hi")))

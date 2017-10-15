@@ -9,9 +9,10 @@
 extern crate nom;
 
 mod gsm;
+mod server;
 
 fn main() {
-    println!("Hello, world!");
+    server::GsmServer::start();
 
     match gsm::gsm_main() {
         Ok(_) => println!("it worked"),

@@ -15,7 +15,8 @@ pub enum CommandType {
     NetworkSystemMode,
     ReadSMS,
     ListSMS,
-    SendSMS
+    SendSMS,
+    GetSMSC
 }
 
 type CommandIssueResult = Result<(), mpsc::SendError<RawCommand>>;
@@ -146,15 +147,20 @@ impl Pipeline {
             command_type: CommandType::SendSMS,
         }).unwrap();
 
-        // Wait some time
-        use std;
-        std::thread::sleep(std::time::Duration::from_millis(100));
-
         self.send_command(RawCommand {
             bytes: format!("{}\u{001a}", string_command).as_bytes().to_vec(),
             write_cr: false,
             sender: sender,
             command_type: CommandType::SendSMS,
+        })
+    }
+
+    pub fn get_smsc(&self, sender: Option<RawCallback>) -> CommandIssueResult {
+        self.send_command(RawCommand {
+            bytes: "AT+CSCA?".as_bytes().to_vec(),
+            write_cr: true,
+            sender: sender,
+            command_type: CommandType::GetSMSC,
         })
     }
     // Ringing: 2
