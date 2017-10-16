@@ -56,7 +56,7 @@ impl TTYPhone {
                       serial_port: String) -> io::Result<thread::JoinHandle<SerialThreadResult>> {
         // Create a reader thread to catch all responses from the
         // serial port
-        thread::Builder::new().name("gsm_evt".to_string()).spawn(
+        thread::Builder::new().name("aji/gsm_evt".to_string()).spawn(
             move || {
                 // TODO: [hleath 2017-09-30] Use Async IO.
 
@@ -194,20 +194,6 @@ pub fn gsm_main() -> io::Result<()> {
 
             // let mut sms_manager = sms::MessagingManager::new(pipeline);
             // sms_manager.load_text_messages().unwrap();
-
-            // TODO: look up the SMSC first so that it can be included
-            // in the command. Not including the SMSC works, but seems
-            // to take a _really_ long time to actually send the
-            // message.
-            pipeline.get_smsc(/*sender=*/None).unwrap();
-
-            let new_pdu = pdu::MessageSubmit::new_default(/*reject_duplicates=*/false, /*status_report_request=*/false,
-                                                          pdu::Number::new_international(String::from("11234567890")),
-                                                          pdu::UserData::new_utf16(String::from("this message hi")))
-                .serialize_to_pdu();
-            println!("created pdu {}", String::from_utf8(new_pdu.clone()).unwrap());
-
-            pipeline.send_sms(new_pdu, None).unwrap();
 
             phone.exit();
             Ok(())
