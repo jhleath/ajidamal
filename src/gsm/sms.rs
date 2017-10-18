@@ -18,7 +18,7 @@ enum AdditionResult {
 }
 
 #[derive(Clone, Debug)]
-struct Message {
+pub struct Message {
     sender: String,
     time_stamp: DateTime<Utc>,
     contents: String
@@ -75,13 +75,38 @@ impl PartialMessage {
     }
 }
 
-enum Request {
+pub enum Request {
     GetMessages { response: mpsc::Sender<Vec<Message>> },
     SendMessage { destination: String, content: String, response: mpsc::Sender<()> }
 }
 
+#[derive(Clone, Debug)]
+pub struct MessagingPipe(mpsc::Sender<Request>);
+
+impl MessagingPipe {
+    pub fn get_messages(&self) -> mpsc::Receiver<Vec<Message>> {
+        let (send, recv) = mpsc::channel();
+        self.0.send(Request::GetMessages {
+            response: send,
+        }).unwrap();
+
+        recv
+    }
+
+    pub fn send_message(&self, destination: String, content: String) -> mpsc::Receiver<()> {
+        let (send, recv) = mpsc::channel();
+        self.0.send(Request::SendMessage{
+            destination: destination,
+            content: content,
+            response: send,
+        }).unwrap();
+
+        recv
+    }
+}
+
 pub struct MessagingManager {
-    cmd_send: mpsc::Sender<Request>,
+    cmd_send: MessagingPipe,
     join_handle: thread::JoinHandle<Result<(), ()>>
 }
 
@@ -169,7 +194,7 @@ impl MessagingManager {
         let join_handle = MessagingManager::start_daemon(pipeline, recv).unwrap();
 
         MessagingManager {
-            cmd_send: send,
+            cmd_send: MessagingPipe(send),
             join_handle: join_handle,
         }
     }
@@ -177,6 +202,10 @@ impl MessagingManager {
     pub fn exit(self) {
         // TODO: disconnect the sender... (if we actually want to exit)
         println!("exited messaging manager {:?}", self.join_handle.join());
+    }
+
+    pub fn get_pipe(&self) -> MessagingPipe {
+        self.cmd_send.clone()
     }
 
     fn start_daemon(pipeline: gsm::command::Pipeline,

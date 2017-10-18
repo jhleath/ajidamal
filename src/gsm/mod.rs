@@ -26,10 +26,12 @@ const EVT_THREAD_SLEEP_MS: u64 = 10;
 
 type SerialThreadResult = Result<(), self::serial::Error>;
 
+pub type ModemPipe = mpsc::Sender<command::RawCommand>;
+
 #[derive(Debug)]
 struct SerialModem {
     thread_handler: thread::JoinHandle<SerialThreadResult>,
-    command_sender: mpsc::Sender<command::RawCommand>
+    command_sender: ModemPipe
 }
 
 impl SerialModem {
@@ -46,6 +48,10 @@ impl SerialModem {
         };
 
         Ok(phone)
+    }
+
+    pub fn get_pipe(&self) -> ModemPipe {
+        self.command_sender.clone()
     }
 
     pub fn send_command(&self, cmd: command::RawCommand) -> Result<(), mpsc::SendError<command::RawCommand>> {
@@ -181,6 +187,12 @@ pub struct Radio {
     pub sms: sms::MessagingManager,
 }
 
+#[derive(Clone)]
+pub struct RadioClient {
+    pub phone: ModemPipe,
+    pub sms: sms::MessagingPipe,
+}
+
 impl Radio {
     pub fn new() -> Result<Radio, errors::Error> {
         match SerialModem::new(GSM_SERIAL_PORT) {
@@ -200,6 +212,13 @@ impl Radio {
                 println!("Error starting SerialModem: {:?}", e);
                 Err(errors::Error::LoadError)
             }
+        }
+    }
+
+    pub fn get_client(&self) -> RadioClient {
+        RadioClient {
+            phone: self.phone.get_pipe(),
+            sms: self.sms.get_pipe(),
         }
     }
 

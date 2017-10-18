@@ -15,15 +15,10 @@ mod server;
 // for all of its messages.
 
 fn main() {
-    // server::GsmServer::start();
-
     match gsm::Radio::new() {
         Ok(phone) => {
-            println!("Successfully started phone.");
-
-            // As of right now, this line should do nothing but wait
-            // on threads to join that will never join.
-            phone.shutdown();
+            println!("Successfully started radio, starting HTTP server.");
+            server::Server::start(phone);
         },
         Err(e) => {
             println!("Received error starting phone {:?}", e);

@@ -8,25 +8,32 @@ extern crate hyper;
 extern crate futures;
 
 
+use self::futures::Stream;
 use self::futures::future::Future;
 
-use self::hyper::{StatusCode};
+use self::hyper::{Body, Chunk, Method, StatusCode};
 use self::hyper::server::{Http, Request, Response, Service};
 
-pub struct GsmServer;
+pub struct Server {
+    radio: super::gsm::RadioClient,
+}
 
-impl GsmServer {
-    pub fn start() {
+impl Server {
+    pub fn start(radio: super::gsm::Radio) {
         println!("starting server on 127.0.0.1:3000");
-        let addr = "127.0.0.1:3000".parse().unwrap();
-        let server = Http::new().bind(&addr, || Ok(GsmServer)).unwrap();
+        let addr = "0.0.0.0:3000".parse().unwrap();
+
+        let server = Http::new().bind(&addr, move || Ok(Server{
+            radio: radio.get_client()
+        })).unwrap();
+
         server.run().unwrap();
     }
 }
 
-impl Service for GsmServer {
+impl Service for Server {
     type Request = Request;
-    type Response = Response;
+    type Response = Response<Box<Stream<Item=Chunk, Error=Self::Error>>>;
     type Error = hyper::Error;
 
     type Future = Box<Future<Item=Self::Response, Error=Self::Error>>;
@@ -35,6 +42,11 @@ impl Service for GsmServer {
         let mut response = Response::new();
 
         match (req.method(), req.path()) {
+            (&Method::Get, "/messages") => {
+                let messages = self.radio.sms.get_messages().recv().unwrap();
+                let body: Box<Stream<Item=_, Error=_>> = Box::new(Body::from(format!("{:?}", messages)));
+                response.set_body(body);
+            },
             _ => {
                 response.set_status(StatusCode::NotFound)
             },
