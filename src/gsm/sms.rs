@@ -174,6 +174,11 @@ impl MessagingManager {
         }
     }
 
+    pub fn exit(self) {
+        // TODO: disconnect the sender... (if we actually want to exit)
+        println!("exited messaging manager {:?}", self.join_handle.join());
+    }
+
     fn start_daemon(pipeline: gsm::command::Pipeline,
                     cmd_recv: mpsc::Receiver<Request>) -> io::Result<thread::JoinHandle<Result<(), ()>>> {
         thread::Builder::new().name("aji/sms".to_string()).spawn(
@@ -201,9 +206,9 @@ impl MessagingManager {
                     messages: Vec::new(),
                 };
 
-                // Load text messages every second from the GSM radio.
+                // Load text messages every ten seconds from the GSM radio.
                 let mut iteration = 0;
-                let sms_load_frequency = 100;
+                let sms_load_frequency = 1000;
 
                 let (load_callback, load_response) = mpsc::channel();
                 let mut waiting_for_load = false;
@@ -262,6 +267,15 @@ impl MessagingManager {
                                         println!("received error parsing the sms messages {:?}", a);
                                     }
                                 }
+
+                                // TODO: Store the messages somewhere nonvolatile so that a crash in
+                                // this program won't require us to reparse the same messages from
+                                // the modem.
+
+                                // TODO: Delete the message after it is parsed and stored
+                                // successfully. One day, the hope is to durably store these things
+                                // on S3, but it looks like disk storage will have to be good for
+                                // now before I get TCP over the modem working.
                             },
                             Err(_) => (),
                         }

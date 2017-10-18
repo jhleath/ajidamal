@@ -27,20 +27,20 @@ const EVT_THREAD_SLEEP_MS: u64 = 10;
 type SerialThreadResult = Result<(), self::serial::Error>;
 
 #[derive(Debug)]
-struct TTYPhone {
+struct SerialModem {
     thread_handler: thread::JoinHandle<SerialThreadResult>,
     command_sender: mpsc::Sender<command::RawCommand>
 }
 
-impl TTYPhone {
-    pub fn new(serial_port: &str) -> io::Result<TTYPhone> {
+impl SerialModem {
+    pub fn new(serial_port: &str) -> io::Result<SerialModem> {
         let serial_port_str: String = String::from(serial_port);
 
         let (send, recv) = mpsc::channel::<command::RawCommand>();
 
-        let handle = try!(TTYPhone::start_listener(recv, serial_port_str));
+        let handle = try!(SerialModem::start_listener(recv, serial_port_str));
 
-        let phone = TTYPhone {
+        let phone = SerialModem {
             thread_handler: handle,
             command_sender: send,
         };
@@ -171,33 +171,55 @@ impl TTYPhone {
     }
 
     fn exit(self) {
-        // TODO: disconnect the sender... (if we actuall want to exit)
+        // TODO: disconnect the sender... (if we actually want to exit)
         println!("{:?}", self.thread_handler.join());
     }
 }
 
-pub fn gsm_main() -> io::Result<()> {
-    match TTYPhone::new(GSM_SERIAL_PORT) {
-        Ok(phone) => {
-            // Send AT just to be sure that things are working.
-            let pipeline = command::Pipeline::new(phone.command_sender.clone());
-            pipeline.attention(None).unwrap();
+pub struct Radio {
+    phone: SerialModem,
+    pub sms: sms::MessagingManager,
+}
 
-            // let (send, recv) = mpsc::channel();
+impl Radio {
+    pub fn new() -> Result<Radio, errors::Error> {
+        match SerialModem::new(GSM_SERIAL_PORT) {
+            Ok(phone) => {
+                let sms_pipeline = command::Pipeline::new(phone.command_sender.clone());
 
-            // pipeline.list_sms(command::SMSStore::All, Some(send)).unwrap();
+                // Ensure that the phone is working before returning to caller.
+                Radio::synchronous_attention_internal(&sms_pipeline);
 
-            // let (typ, response) = recv.recv().unwrap();
-            // assert!(typ == command::CommandType::ListSMS);
-            // println!("got response {:?}:{}", typ,response);
-            // println!("parsing response {:?}", responses::parse_list_sms_response(response.as_bytes()));
+                // Immediately start a background worker for
+                Ok(Radio {
+                    phone: phone,
+                    sms: sms::MessagingManager::new(sms_pipeline),
+                })
+            },
+            Err(e) => {
+                println!("Error starting SerialModem: {:?}", e);
+                Err(errors::Error::LoadError)
+            }
+        }
+    }
 
-            // let mut sms_manager = sms::MessagingManager::new(pipeline);
-            // sms_manager.load_text_messages().unwrap();
+    pub fn synchronous_attention(&self) {
+        // TODO: Clean this up, we shouldn't need to create a new
+        // struct just to send a simple command.
+        let temp_pipeline = command::Pipeline::new(self.phone.command_sender.clone());
+        Radio::synchronous_attention_internal(&temp_pipeline)
+    }
 
-            phone.exit();
-            Ok(())
-        },
-        Err(e) => Err(e)
+    fn synchronous_attention_internal(pipeline: &command::Pipeline) {
+        let (send, recv) = mpsc::channel();
+        pipeline.attention(Some(send)).unwrap();
+
+        // Wait 5 seconds to get a response from the attention
+        recv.recv_timeout(Duration::from_millis(5000)).unwrap();
+    }
+
+    pub fn shutdown(self) {
+        self.sms.exit();
+        self.phone.exit();
     }
 }

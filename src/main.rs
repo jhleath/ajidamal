@@ -11,11 +11,22 @@ extern crate nom;
 mod gsm;
 mod server;
 
-fn main() {
-    server::GsmServer::start();
+// TODO: Set up logging so that this program doesn't spew to stdout
+// for all of its messages.
 
-    match gsm::gsm_main() {
-        Ok(_) => println!("it worked"),
-        Err(e) => println!("got error {:?}", e)
+fn main() {
+    // server::GsmServer::start();
+
+    match gsm::Radio::new() {
+        Ok(phone) => {
+            println!("Successfully started phone.");
+
+            // As of right now, this line should do nothing but wait
+            // on threads to join that will never join.
+            phone.shutdown();
+        },
+        Err(e) => {
+            println!("Received error starting phone {:?}", e);
+        }
     }
 }
