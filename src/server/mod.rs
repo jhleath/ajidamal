@@ -12,6 +12,7 @@ use self::futures::Stream;
 use self::futures::future::Future;
 
 use self::hyper::{Body, Chunk, Method, StatusCode};
+use self::hyper::header::{ContentType};
 use self::hyper::server::{Http, Request, Response, Service};
 
 pub struct Server {
@@ -41,17 +42,43 @@ impl Service for Server {
     fn call(&self, req: Request) -> Self::Future {
         let mut response = Response::new();
 
-        match (req.method(), req.path()) {
-            (&Method::Get, "/messages") => {
+        let (method, uri, _version, _headers, body) = req.deconstruct();
+
+        match (method, uri.path()) {
+            (Method::Get, "/messages") => {
                 let messages = self.radio.sms.get_messages().recv().unwrap();
                 let body: Box<Stream<Item=_, Error=_>> = Box::new(Body::from(serde_json::to_string(&messages).unwrap()));
+                response.headers_mut().set(ContentType::json());
                 response.set_body(body);
+
+                Box::new(futures::future::ok(response))
+            },
+            (Method::Post, "/messages/new") => {
+                let client = self.radio.clone();
+
+                Box::new(body.concat2().and_then(move |body: Chunk| {
+                    let w: WireMessage = serde_json::from_slice(&body).unwrap();
+                    assert!(w.content.len() < 70);
+
+                    // Quick send the message before we do so safely.
+                    client.sms.send_message(w.destination_address, w.content).recv().unwrap();
+
+                    let body: Box<Stream<Item=_, Error=_>> = Box::new(Body::from(""));
+                    response.set_body(body);
+                    futures::future::ok(response)
+                }))
             },
             _ => {
-                response.set_status(StatusCode::NotFound)
+                response.set_status(StatusCode::NotFound);
+
+                Box::new(futures::future::ok(response))
             },
         }
-
-        Box::new(futures::future::ok(response))
     }
+}
+
+#[derive(Deserialize)]
+struct WireMessage {
+    destination_address: String,
+    content: String,
 }
