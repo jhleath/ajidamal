@@ -6,7 +6,7 @@
 
 extern crate hyper;
 extern crate futures;
-
+extern crate serde_json;
 
 use self::futures::Stream;
 use self::futures::future::Future;
@@ -44,7 +44,7 @@ impl Service for Server {
         match (req.method(), req.path()) {
             (&Method::Get, "/messages") => {
                 let messages = self.radio.sms.get_messages().recv().unwrap();
-                let body: Box<Stream<Item=_, Error=_>> = Box::new(Body::from(format!("{:?}", messages)));
+                let body: Box<Stream<Item=_, Error=_>> = Box::new(Body::from(serde_json::to_string(&messages).unwrap()));
                 response.set_body(body);
             },
             _ => {

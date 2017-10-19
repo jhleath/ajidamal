@@ -17,7 +17,7 @@ enum AdditionResult {
     Complete(Message)
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Message {
     sender: String,
     time_stamp: DateTime<Utc>,
