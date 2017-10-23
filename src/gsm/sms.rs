@@ -294,6 +294,7 @@ impl MessagingManager {
                                     },
                                     a => {
                                         println!("received error parsing the sms messages {:?}", a);
+                                        println!("response: {}", response);
                                     }
                                 }
 

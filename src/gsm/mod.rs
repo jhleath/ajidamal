@@ -197,12 +197,24 @@ impl Radio {
     pub fn new() -> Result<Radio, errors::Error> {
         match SerialModem::new(GSM_SERIAL_PORT) {
             Ok(phone) => {
-                let sms_pipeline = command::Pipeline::new(phone.command_sender.clone());
+                // Set the correct parameters for the phone
+                let configuration_pipeline = command::Pipeline::new(phone.command_sender.clone());
+
+                // To make things easier to parse, turn off command
+                // echo and set the result code to the short codes.
+                configuration_pipeline.set_command_echo(false).unwrap();
+                configuration_pipeline.set_result_code_mode(command::ResultCodeMode::ShortCode).unwrap();
+
+                configuration_pipeline.set_sms_mode(command::SMSMode::PDUMode).unwrap();
+
+                // Sleep to ensure that the changes take effect
+                thread::sleep(Duration::from_millis(1000));
 
                 // Ensure that the phone is working before returning to caller.
-                Radio::synchronous_attention_internal(&sms_pipeline);
+                Radio::synchronous_attention_internal(&configuration_pipeline);
 
-                // Immediately start a background worker for
+                // Immediately start a MessagingManager for this phone
+                let sms_pipeline = command::Pipeline::new(phone.command_sender.clone());
                 Ok(Radio {
                     phone: phone,
                     sms: sms::MessagingManager::new(sms_pipeline),

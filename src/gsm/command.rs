@@ -1,8 +1,5 @@
 use std::sync::mpsc;
 
-// Phone Modes:
-// PDU(0) vs Text mode(1) for SMS = AT+CMGF
-
 type RawCallback = mpsc::Sender<(CommandType, String)>;
 
 #[derive(PartialEq, Debug)]
@@ -16,7 +13,10 @@ pub enum CommandType {
     ReadSMS,
     ListSMS,
     SendSMS,
-    GetSMSC
+    GetSMSC,
+    EnableEcho,
+    SetSMSMode,
+    SetResultCodeMode
 }
 
 type CommandIssueResult = Result<(), mpsc::SendError<RawCommand>>;
@@ -163,8 +163,51 @@ impl Pipeline {
             command_type: CommandType::GetSMSC,
         })
     }
+
+    pub fn set_command_echo(&self, echo: bool) -> CommandIssueResult {
+        let param = if echo {
+            "1"
+        } else {
+            "0"
+        };
+
+        self.send_command(RawCommand {
+            bytes: format!("ATE{}", param).as_bytes().to_vec(),
+            write_cr: true,
+            sender: None,
+            command_type: CommandType::EnableEcho
+        })
+    }
+
+    pub fn set_sms_mode(&self, mode: SMSMode) -> CommandIssueResult {
+        self.send_command(RawCommand {
+            bytes: format!("AT+CMGF={}", mode as i32).as_bytes().to_vec(),
+            write_cr: true,
+            sender: None,
+            command_type: CommandType::SetSMSMode
+        })
+    }
+
+    pub fn set_result_code_mode(&self, mode: ResultCodeMode) -> CommandIssueResult {
+        self.send_command(RawCommand {
+            bytes: format!("ATV{}", mode as i32).as_bytes().to_vec(),
+            write_cr: true,
+            sender: None,
+            command_type: CommandType::SetResultCodeMode
+        })
+    }
     // Ringing: 2
     // MISSED_CALL: 09:21AM <NUM>
+}
+
+pub enum ResultCodeMode {
+    ShortCode = 0,
+    VerboseCode = 1
+}
+
+pub enum SMSMode {
+    PDUMode = 0,
+    TextMode = 1
 }
 
 pub enum SMSStore {
