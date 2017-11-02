@@ -1,3 +1,5 @@
+#!/bin/bash
+
 # As it turns out, there is a lovely TFT frame buffer driver for linux
 # already for the display that we are using (the adafruit 1.8" TFT SPI
 # display).
