@@ -1,6 +1,7 @@
 extern crate framebuffer;
 
 pub mod base;
+pub mod text;
 pub mod view;
 
 use self::framebuffer::{Framebuffer};
@@ -42,11 +43,21 @@ impl Screen {
         }
     }
 
+    pub fn with_root_view<F: FnOnce(&mut View)>(&mut self, f: F) {
+        f(&mut self.root_view)
+    }
+
     pub fn dimensions(&self) -> (u32, u32) {
         (self.width, self.height)
     }
 
     pub fn write_pixel(&mut self, x: usize, y: usize, color: Color) {
+        // We should only be writing fully opaque pixels to the
+        // display at this point.
+        if color.opacity() != 1.0 {
+            return
+        }
+
         let pixel_index = (y * self.line_length) + (x * self.bytes_per_pixel);
         if pixel_index >= self.frame.len() {
             panic!("Aborting because pixel x: {}, y: {} is outside the bounds of the display (w: {}, h: {})",
@@ -69,6 +80,27 @@ impl Screen {
 
             bytes_used += 1;
         }
+    }
+
+    pub fn render_view(&mut self) {
+        // The root view buffer is the same size as the screen, so we
+        // can render it directly.
+        let (width, height, data) = self.root_view.render().deconstruct();
+
+        let mut x = 0;
+        let mut y = 0;
+        while y < height {
+            while x < width {
+                self.write_pixel(x as usize, y as usize,
+                                 data[((y * width) + x) as usize]);
+                x += 1;
+            }
+
+            x = 0;
+            y+= 1;
+        }
+
+        self.flush();
     }
 
     pub fn flush(&mut self) {
