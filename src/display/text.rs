@@ -3,7 +3,7 @@ extern crate rusttype;
 use self::rusttype::{Font, FontCollection, Scale, point, PositionedGlyph};
 
 use super::base::{Color};
-use super::view::{View};
+use super::view::{Buffer};
 
 // TODO: [hleath 2017-11-02] Don't include resources in the codebase
 // like this. Of course, that will require a real resource loader for
@@ -27,7 +27,7 @@ impl<'a> TextRenderer<'a> {
         }
     }
 
-    pub fn rasterize(&self, size: f32, color: Color, data: String) -> View {
+    pub fn rasterize(&self, size: f32, color: Color, data: String) -> Buffer {
         let pixel_height = size.ceil() as usize;
 
         // Uniformly scale the font to the requested size.
@@ -51,7 +51,7 @@ impl<'a> TextRenderer<'a> {
             .map(|g| g.position().x as f32 + g.unpositioned().h_metrics().advance_width)
             .next().unwrap_or(0.0).ceil() as usize;
 
-        let mut text_view = View::new(text_width as u64, pixel_height as u64);
+        let mut text_buffer = Buffer::new(text_width as u64, pixel_height as u64);
 
         for g in glyphs {
             if let Some(bb) = g.pixel_bounding_box() {
@@ -66,12 +66,12 @@ impl<'a> TextRenderer<'a> {
                         let x = x as usize;
                         let y = y as usize;
 
-                        text_view.write_pixel(x, y, pixel_color);
+                        text_buffer.write_pixel(x, y, pixel_color);
                     }
                 })
             }
         }
 
-        text_view
+        text_buffer
     }
 }

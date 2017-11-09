@@ -1,7 +1,24 @@
 use super::base::*;
 
+use std::fmt::Debug;
+
+pub trait Delegate : Debug {
+    fn needs_redraw(&self) -> bool;
+    fn draw(&mut self, view: &mut View);
+}
+
 #[derive(Debug)]
-pub struct ViewBuffer {
+struct NoopDelegate{}
+
+impl Delegate for NoopDelegate {
+    fn needs_redraw(&self) -> bool { false }
+    // fn handle_event(&self, Event) -> bool {}
+    // fn subviews() -> Vec<Box<Delegate>> <-- I don't know about this one.
+    fn draw(&mut self, _view: &mut View) { }
+}
+
+#[derive(Debug)]
+pub struct Buffer {
     // TODO: [hleath 2017-11-02] This vector should probably just be
     // u8 so that we can memcpy directly into the frame buffer memory
     // later.
@@ -11,17 +28,17 @@ pub struct ViewBuffer {
     height: u64
 }
 
-impl ViewBuffer {
-    pub fn new(width: u64, height: u64) -> ViewBuffer {
-        ViewBuffer {
+impl Buffer {
+    pub fn new(width: u64, height: u64) -> Buffer {
+        Buffer {
             width: width,
             height: height,
             data: vec![Color::transparent(); (width * height) as usize]
         }
     }
 
-    pub fn deconstruct(self) -> (u64, u64, Vec<Color>) {
-        (self.width, self.height, self.data)
+    pub fn deconstruct(&self) -> (u64, u64, &[Color]) {
+        (self.width, self.height, self.data.as_ref())
     }
 
     pub fn write_pixel(&mut self, x: usize, y: usize, color: Color) {
@@ -33,12 +50,12 @@ impl ViewBuffer {
         self.data[index] = color;
     }
 
-    pub fn render_full(&mut self, buffer: &ViewBuffer, frame: Rect) {
+    fn render_full(&mut self, buffer: &Buffer, frame: Rect) {
         let (width, height) = (buffer.width, buffer.height);
         self.render(buffer, frame, Rect::from_origin(width, height));
     }
 
-    pub fn render(&mut self, buffer: &ViewBuffer, frame: Rect, bounds: Rect) {
+    fn render(&mut self, buffer: &Buffer, frame: Rect, bounds: Rect) {
         // TODO: [hleath 2017-11-02] This code is almost certainly
         // super-slow. I'll need to work to improve it.
         //
@@ -96,79 +113,44 @@ impl ViewBuffer {
     }
 }
 
-// Views are objects that can render to the screen. They may only
-// render a portion of their contents to a portion of the screen.
-//
-// Frame - location in superview
-// Bounds - locaiton in this view
 #[derive(Debug)]
-pub struct View {
-    subviews: Vec<View>,
-    frame: Rect,
+pub struct View<'a> {
     bounds: Rect,
-    buffer: ViewBuffer
+    buffer: &'a mut Buffer,
 }
 
-impl View {
-    pub fn new(w: u64, h: u64) -> View {
-        View {
-            subviews: Vec::new(),
-            frame: Rect::from_origin(w, h),
-            bounds: Rect::from_origin(w, h),
-            buffer: ViewBuffer::new(w, h)
-        }
-    }
+impl<'a> View<'a> {
+    pub fn new(bounds: Rect, buffer: &'a mut Buffer) -> View {
+        assert!(bounds.origin.x < buffer.width);
+        assert!(bounds.origin.x + bounds.width <= buffer.width);
+        assert!(bounds.origin.y < buffer.height);
+        assert!(bounds.origin.y + bounds.height <= buffer.height);
 
-    pub fn height(&self) -> u64 {
-        self.buffer.height
+        View {
+            bounds: bounds,
+            buffer: buffer,
+        }
     }
 
     pub fn width(&self) -> u64 {
-        self.buffer.width
+        self.bounds.width
     }
 
-    pub fn add_full_subview(&mut self, subview: View, origin: Point) {
-        let (width, height) = (subview.width(), subview.height());
-        self.add_subview(subview,
-                         Rect::new(origin, width, height),
-                         Rect::from_origin(width, height));
+    pub fn height(&self) -> u64 {
+        self.bounds.height
     }
 
-    pub fn add_subview(&mut self, mut subview: View, frame: Rect, bounds: Rect) {
-        assert!(frame.width == bounds.width);
-        assert!(frame.height == bounds.height);
-
-        subview.frame = frame;
-        subview.bounds = bounds;
-        self.subviews.push(subview);
+    pub fn new_full(buffer: &'a mut Buffer) -> View {
+        let bounds = Rect::from_origin(buffer.width, buffer.height);
+        Self::new(bounds, buffer)
     }
 
     pub fn write_pixel(&mut self, x: usize, y: usize, color: Color) {
-        self.buffer.write_pixel(x, y, color)
-    }
+        assert!((x as u64) < self.bounds.width);
+        assert!((y as u64) < self.bounds.height);
 
-    pub fn render(&self) -> ViewBuffer {
-        // Don't support scaling the view at all
-        assert!(self.frame.width == self.bounds.width);
-        assert!(self.frame.height == self.bounds.height);
-
-        // TODO: [hleath 2017-11-02] Each view in the hierarchy will
-        // create its own buffer to render onto. This is a lot of
-        // allocation. Instead, we should probably just have the lower
-        // views compute a frame to the top-level and render directly
-        // onto that.
-
-        // Render the current layer of view
-        let mut buffer = ViewBuffer::new(self.frame.width, self.frame.height);
-        buffer.render(&self.buffer,
-                      Rect::from_origin(self.frame.width, self.frame.height),
-                      self.bounds);
-
-        for view in self.subviews.iter() {
-            let subview_buffer = view.render();
-            buffer.render_full(&subview_buffer, view.frame);
-        }
-
-        buffer
+        self.buffer.write_pixel(x + (self.bounds.origin.x as usize),
+                                y + (self.bounds.origin.y as usize),
+                                color)
     }
 }

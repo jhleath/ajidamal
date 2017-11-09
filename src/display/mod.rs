@@ -3,11 +3,12 @@ extern crate framebuffer;
 pub mod base;
 pub mod text;
 pub mod view;
+pub mod ui;
 
 use self::framebuffer::{Framebuffer};
 
 use self::base::*;
-use self::view::{View};
+use self::view::{Buffer};
 
 #[derive(Debug)]
 pub struct Screen {
@@ -17,7 +18,6 @@ pub struct Screen {
     bytes_per_pixel: usize,
     width: u32,
     height: u32,
-    root_view: View,
 }
 
 impl Screen {
@@ -38,13 +38,8 @@ impl Screen {
             line_length: line_length as usize,
             bytes_per_pixel: bytespp as usize,
             width: w,
-            height: h,
-            root_view: View::new(w as u64, h as u64)
+            height: h
         }
-    }
-
-    pub fn with_root_view<F: FnOnce(&mut View)>(&mut self, f: F) {
-        f(&mut self.root_view)
     }
 
     pub fn dimensions(&self) -> (u32, u32) {
@@ -82,10 +77,8 @@ impl Screen {
         }
     }
 
-    pub fn render_view(&mut self) {
-        // The root view buffer is the same size as the screen, so we
-        // can render it directly.
-        let (width, height, data) = self.root_view.render().deconstruct();
+    pub fn render_view(&mut self, buffer: &Buffer) {
+        let (width, height, data) = buffer.deconstruct();
 
         let mut x = 0;
         let mut y = 0;
