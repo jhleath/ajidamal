@@ -1,10 +1,11 @@
 use super::base::*;
+use super::text::{TextRenderer};
 
 use std::fmt::Debug;
 
 pub trait Delegate : Debug {
     fn needs_redraw(&self) -> bool;
-    fn draw(&mut self, view: &mut View);
+    fn draw(&mut self, view: &mut View, text: &TextRenderer);
 }
 
 #[derive(Debug)]
@@ -14,7 +15,7 @@ impl Delegate for NoopDelegate {
     fn needs_redraw(&self) -> bool { false }
     // fn handle_event(&self, Event) -> bool {}
     // fn subviews() -> Vec<Box<Delegate>> <-- I don't know about this one.
-    fn draw(&mut self, _view: &mut View) { }
+    fn draw(&mut self, _view: &mut View, _text: &TextRenderer) { }
 }
 
 #[derive(Debug)]
@@ -35,6 +36,14 @@ impl Buffer {
             height: height,
             data: vec![Color::transparent(); (width * height) as usize]
         }
+    }
+
+    pub fn width(&self) -> u64 {
+        self.width
+    }
+
+    pub fn height(&self) -> u64 {
+        self.height
     }
 
     pub fn deconstruct(&self) -> (u64, u64, &[Color]) {
@@ -152,5 +161,24 @@ impl<'a> View<'a> {
         self.buffer.write_pixel(x + (self.bounds.origin.x as usize),
                                 y + (self.bounds.origin.y as usize),
                                 color)
+    }
+
+    pub fn render_full(&mut self, other: &Buffer, x: u64, y: u64) {
+        self.render(other,
+                    Rect::new(Point::new(x, y), other.width, other.height),
+                    Rect::from_origin(other.width, other.height))
+    }
+
+    pub fn render(&mut self, other: &Buffer, frame: Rect, bounds: Rect) {
+        // Translate the frame to the new coordinate system
+        assert!((frame.origin.x as u64) < self.bounds.width);
+        assert!((frame.origin.x + frame.width as u64) <= self.bounds.width);
+        assert!((frame.origin.y as u64) < self.bounds.height);
+        assert!((frame.origin.y + frame.height as u64) <= self.bounds.height);
+
+        self.buffer.render(other, Rect::new(Point::new(frame.origin.x + self.bounds.origin.x,
+                                                       frame.origin.y + self.bounds.origin.y),
+                                            frame.width, frame.height),
+                           bounds)
     }
 }

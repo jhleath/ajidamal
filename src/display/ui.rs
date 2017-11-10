@@ -1,3 +1,5 @@
+extern crate chrono;
+
 use std::io;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration};
@@ -6,6 +8,8 @@ use super::{Screen};
 use super::base::{Color};
 use super::text::{TextRenderer};
 use super::view::{Buffer, Delegate, View};
+
+use self::chrono::prelude::*;
 
 // 10ms sleeping time gets us to around 100hz - actual processing
 // time.
@@ -36,7 +40,7 @@ impl Interface {
             move || {
                 let mut screen = Screen::new(fb_path);
                 let mut root_view = Buffer::new(screen.width as u64, screen.height as u64);
-                let _text_renderer = TextRenderer::new();
+                let text_renderer = TextRenderer::new();
 
                 let mut status_bar = StatusBar::new(/*height=*/17);
 
@@ -45,7 +49,7 @@ impl Interface {
 
                     if status_bar.needs_redraw() {
                         changed = true;
-                        status_bar.draw(&mut View::new_full(&mut root_view));
+                        status_bar.draw(&mut View::new_full(&mut root_view), &text_renderer);
                     }
 
                     if changed {
@@ -61,15 +65,18 @@ impl Interface {
 #[derive(Debug)]
 struct StatusBar {
     height: u64,
-    drawn: bool
+    render_time: Option<DateTime<Local>>,
 }
 
 impl Delegate for StatusBar {
     fn needs_redraw(&self) -> bool {
-        !self.drawn
+        match self.render_time {
+            None => true,
+            Some(t) => (Local::now().signed_duration_since(t) > chrono::Duration::minutes(1))
+        }
     }
 
-    fn draw(&mut self, view: &mut View) {
+    fn draw(&mut self, view: &mut View, text: &TextRenderer) {
         let (mut i, mut j) = (0, 0);
         while j < self.height {
             while i < view.width() {
@@ -83,7 +90,16 @@ impl Delegate for StatusBar {
             j += 1;
         }
 
-        self.drawn = true
+        let local = Local::now();
+        let time_buffer = text.rasterize(/*size=*/14.0, Color::gray(/*intensity=*/0),
+                                         format!("{}", local.format("%H:%M %p")));
+
+        // 5 pixels of padding on the right
+        let text_start_x = (view.width() - time_buffer.width()) - 5;
+        view.render_full(&time_buffer, text_start_x, /*y=*/1);
+
+
+        self.render_time = Some(Local::now());
     }
 }
 
@@ -91,7 +107,7 @@ impl StatusBar {
     fn new(height: u64) -> StatusBar {
         StatusBar {
             height: height,
-            drawn: false
+            render_time: None
         }
     }
 }
