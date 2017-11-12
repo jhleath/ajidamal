@@ -11,9 +11,7 @@ use super::view::{Buffer, Delegate, View};
 
 use self::chrono::prelude::*;
 
-// 10ms sleeping time gets us to around 100hz - actual processing
-// time.
-const UI_THREAD_SLEEP_MS: u64 = 100;
+const UI_THREAD_SLEEP_MS: u64 = 50;
 
 pub struct Interface {
     thread_handler: JoinHandle<()>
@@ -59,6 +57,9 @@ impl Interface {
                                                        Local::now()));
                 main_view.add_content(ContentView::new("Offscreen".to_string(),
                                                        "Other Media 3".to_string(),
+                                                       Local::now()));
+                main_view.add_content(ContentView::new("More Offscreen".to_string(),
+                                                       "Other Media 4".to_string(),
                                                        Local::now()));
 
                 loop {
@@ -150,6 +151,8 @@ struct MainView {
     buffer: Buffer,
     content: Vec<ContentView>,
     bounds: Rect,
+    used_height: Option<u64>,
+    scrolling_down: bool
 }
 
 impl Delegate for MainView {
@@ -168,6 +171,9 @@ impl Delegate for MainView {
         assert!(width == self.bounds.width);
         assert!(height == self.bounds.height);
 
+        // Draw the background
+        view.draw_box(Point::origin(), width as usize, height as usize, Color::gray(/*intensity=*/0));
+
         let mut i = 0;
         for c in self.content.iter_mut() {
             // TODO: [hleath 2017-11-12] Right now, all
@@ -183,7 +189,7 @@ impl Delegate for MainView {
                 break;
             }
 
-            if c.needs_redraw() || !self.drawn {
+            if c.needs_redraw() {
                 let mut content_view = View::new(
                     Rect::new(Point::new(/*x=*/padding, y),
                               width - (padding * 2), content_view_height),
@@ -192,14 +198,15 @@ impl Delegate for MainView {
 
                 c.draw(&mut content_view, text);
             }
+
+            // Keep the padding pixels at the bottom of the view as well.
+            self.used_height = Some(y+ content_view_height + padding);
             i += 1;
         }
 
         view.render(&self.buffer, Rect::from_origin(width, height), self.bounds);
         self.drawn = true;
-
-        // self.bounds = self.debug_calculate_new_fake_scroll(self.bounds);
-        // self.mark_dirty()
+        self._debug_calculate_new_fake_scroll();
     }
 }
 
@@ -213,15 +220,40 @@ impl MainView {
             drawn: false,
             content: Vec::new(),
             bounds: Rect::from_origin(width, height),
-            buffer: Buffer::new(buffer_width, buffer_height)
+            buffer: Buffer::new(buffer_width, buffer_height),
+            used_height: None,
+            scrolling_down: true
         }
     }
 
     // TODO: [hleath 2017-11-12] Remove this when we have user input
     // controlling the scrolling.
-    fn _debug_calculate_new_fake_scroll(&self, bounds: Rect) -> Rect {
-        // TODO: [hleath 2017-11-12] Implement fake scrolling behavior
-        bounds
+    fn _debug_calculate_new_fake_scroll(&mut self) {
+        match self.used_height {
+            None => (),
+            Some(h) => {
+                let old_bounds = self.bounds;
+
+                let new_bounds = if self.scrolling_down {
+                    Rect::new(Point::new(/*x=*/0, old_bounds.origin.y + 1),
+                              old_bounds.width, old_bounds.height)
+                } else {
+                    Rect::new(Point::new(/*x=*/0, old_bounds.origin.y - 1),
+                              old_bounds.width, old_bounds.height)
+                };
+
+                if new_bounds.origin.y == 0 {
+                    assert!(!self.scrolling_down);
+                    self.scrolling_down = true;
+                } else if new_bounds.origin.y + new_bounds.height == h {
+                    assert!(self.scrolling_down);
+                    self.scrolling_down = false;
+                }
+
+                self.bounds = new_bounds;
+                self.mark_dirty()
+            }
+        }
     }
 
     fn mark_dirty(&mut self) {

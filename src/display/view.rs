@@ -84,8 +84,8 @@ impl Buffer {
         // Assert that bounds exists
         assert!(bounds.origin.x < buffer.width);
         assert!(bounds.origin.y < buffer.height);
-        assert!(bounds.origin.x + bounds.width <= self.width);
-        assert!(bounds.origin.y + bounds.height <= self.height);
+        assert!(bounds.origin.x + bounds.width <= buffer.width);
+        assert!(bounds.origin.y + bounds.height <= buffer.height);
 
         let mut frame_index = ((self.width * frame.origin.y) + frame.origin.x) as usize;
         let mut bounds_index = ((buffer.width * bounds.origin.y) + bounds.origin.x) as usize;
