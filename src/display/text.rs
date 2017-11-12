@@ -59,8 +59,10 @@ impl<'a> TextRenderer<'a> {
         for g in glyphs {
             if let Some(bb) = g.pixel_bounding_box() {
                 g.draw(|x, y, v| {
-                    // v should be in the range 0.0 to 1.0
-                    let pixel_color = color.with_opacity(v);
+                    // FIXME: For some reason, v is coming back as
+                    // 1.0 + episilon now, so I'm pegging it to 1.0
+                    // with .min().
+                    let pixel_color = color.with_opacity(v.min(1.0));
 
                     let x = x as i32 + bb.min.x;
                     let y = y as i32 + bb.min.y;

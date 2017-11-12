@@ -1,8 +1,10 @@
 extern crate chrono;
 
+use std::cmp;
 use std::io;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration};
+use std::sync::mpsc;
 
 use super::{Screen};
 use super::base::{Color, Point, Rect};
@@ -11,16 +13,26 @@ use super::view::{Buffer, Delegate, View};
 
 use self::chrono::prelude::*;
 
+use gsm::sms::Message;
+
 const UI_THREAD_SLEEP_MS: u64 = 50;
 
+pub enum Command {
+    SetMessages(Vec<Message>)
+}
+
 pub struct Interface {
-    thread_handler: JoinHandle<()>
+    pub sender: mpsc::Sender<Command>,
+    thread_handler: JoinHandle<()>,
 }
 
 impl Interface {
     pub fn new(fb_path: String) -> Interface {
+        let (send, recv) = mpsc::channel::<Command>();
+
         Interface {
-            thread_handler: Self::start_thread(fb_path).unwrap(),
+            thread_handler: Self::start_thread(fb_path, recv).unwrap(),
+            sender: send,
         }
     }
 
@@ -31,7 +43,7 @@ impl Interface {
 
     // The UI should run on a separate thread from the application
     // logic so that it stays somewhat responsive.
-    pub fn start_thread(fb_path: String) -> io::Result<JoinHandle<()>> {
+    pub fn start_thread(fb_path: String, receiver: mpsc::Receiver<Command>) -> io::Result<JoinHandle<()>> {
         // Create a reader thread to catch all responses from the
         // serial port
         thread::Builder::new().name("aji/ui".to_string()).spawn(
@@ -63,6 +75,25 @@ impl Interface {
                                                        Local::now()));
 
                 loop {
+                    match receiver.try_recv() {
+                        Ok(cmd) => {
+                            match cmd {
+                                Command::SetMessages(m) => {
+                                    main_view.clear_content();
+                                    for msg in m.into_iter() {
+                                        main_view.add_content(ContentView::new(msg.sender,
+                                                                               msg.contents,
+                                                                               msg.time_stamp.with_timezone(&Local)));
+                                    }
+                                }
+                            }
+                        },
+                        Err(mpsc::TryRecvError::Empty) => (),
+                        Err(mpsc::TryRecvError::Disconnected) => {
+                            return
+                        }
+                    }
+
                     let mut changed = false;
 
                     if status_bar.needs_redraw() {
@@ -128,7 +159,15 @@ impl Delegate for ContentView {
 
         view.render_full(&from_buffer, /*x=*/2, /*y=*/1);
 
-        view.render_full(&content_buffer, /*x=*/2, from_buffer.height());
+        // TODO: [hleath 2017-11-13] This code just truncates the
+        // content to the view. We should either... truncate the
+        // string itself if it is too long, perform wrapping, or both.
+        let min_width = cmp::min(width - 4, content_buffer.width());
+        let min_height = cmp::min(height - from_buffer.height(), content_buffer.height());
+        view.render(&content_buffer,
+                    Rect::new(Point::new(2, from_buffer.height()),
+                              min_width, min_height),
+                    Rect::from_origin(min_width, min_height));
 
         self.drawn = true;
     }
@@ -262,6 +301,12 @@ impl MainView {
 
     fn add_content(&mut self, c: ContentView) {
         self.content.push(c);
+        self.mark_dirty();
+    }
+
+    fn clear_content(&mut self) {
+        self.content = Vec::new();
+        self.mark_dirty();
     }
 }
 

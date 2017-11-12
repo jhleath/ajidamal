@@ -19,9 +19,9 @@ enum AdditionResult {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Message {
-    sender: String,
-    time_stamp: DateTime<Utc>,
-    contents: String
+    pub sender: String,
+    pub time_stamp: DateTime<Utc>,
+    pub contents: String
 }
 
 fn get_hash_for_message(sender: &str, reference_number: u8) -> String {
