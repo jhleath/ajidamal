@@ -27,6 +27,9 @@ impl<'a> TextRenderer<'a> {
         }
     }
 
+    // TODO: [hleath 2017-11-12] This code doesn't actually include
+    // any ability to do wrapping. That will make it difficult to
+    // display longer strings.
     pub fn rasterize(&self, size: f32, color: Color, data: &str) -> Buffer {
         let pixel_height = size.ceil() as usize;
 

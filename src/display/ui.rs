@@ -45,6 +45,13 @@ impl Interface {
                 let mut status_bar = StatusBar::new();
                 let mut main_view = MainView::new();
 
+                main_view.add_content(ContentView::new("John Smith".to_string(),
+                                                       "Text Message 1".to_string(),
+                                                       Local::now()));
+                main_view.add_content(ContentView::new("Jane Doe".to_string(),
+                                                       "Other Media 2".to_string(),
+                                                       Local::now()));
+
                 loop {
                     let mut changed = false;
 
@@ -148,8 +155,17 @@ impl Delegate for MainView {
         let (width, _height) = (view.width(), view.height());
 
         let mut i = 0;
+        // TODO: [hleath 2017-11-12] The idea of the MainView is to
+        // have some amount of ability to scroll. The ContentViews
+        // should be rendered onto a much larger, "infinite" canvas,
+        // that the main view only changes the bounds of for rendering
+        // to the screen.
         for c in self.content.iter_mut() {
             if c.needs_redraw() {
+                // TODO: [hleath 2017-11-12] Right now, all
+                // ContentViews are 50 pixels high. They should have a
+                // dynamic height depending on the amount of data to
+                // display.
                 let mut content_view = view.new_subview(
                     Rect::new(Point::new(/*x=*/2, /*y=*/(52 * i) + 2),
                               (width - 4), /*height=*/50));
