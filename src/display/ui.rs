@@ -42,14 +42,23 @@ impl Interface {
                 let mut root_view = Buffer::new(screen.width as u64, screen.height as u64);
                 let text_renderer = TextRenderer::new();
 
+                let status_bar_height = 17;
                 let mut status_bar = StatusBar::new();
-                let mut main_view = MainView::new();
+
+                // The main view has the ability to render 200
+                // ContentViews of 50 pixels each in its internal
+                // buffer.
+                let mut main_view = MainView::new(screen.width as u64, screen.height as u64 - status_bar_height,
+                                                  screen.width as u64, 1000);
 
                 main_view.add_content(ContentView::new("John Smith".to_string(),
                                                        "Text Message 1".to_string(),
                                                        Local::now()));
                 main_view.add_content(ContentView::new("Jane Doe".to_string(),
                                                        "Other Media 2".to_string(),
+                                                       Local::now()));
+                main_view.add_content(ContentView::new("Offscreen".to_string(),
+                                                       "Other Media 3".to_string(),
                                                        Local::now()));
 
                 loop {
@@ -58,7 +67,7 @@ impl Interface {
                     if status_bar.needs_redraw() {
                         changed = true;
                         status_bar.draw(
-                            &mut View::new(Rect::from_origin(screen.width as u64, /*height=*/17),
+                            &mut View::new(Rect::from_origin(screen.width as u64, status_bar_height),
                                            &mut root_view),
                             &text_renderer);
                     }
@@ -66,8 +75,9 @@ impl Interface {
                     if main_view.needs_redraw() {
                         changed = true;
                         main_view.draw(
-                            &mut View::new(Rect::new(Point::new(/*x=*/0, /*y=*/17),
-                                                     screen.width as u64, screen.height as u64 - 17),
+                            &mut View::new(Rect::new(Point::new(/*x=*/0, status_bar_height),
+                                                     screen.width as u64,
+                                                     screen.height as u64 - status_bar_height),
                                            &mut root_view),
                             &text_renderer);
                     }
@@ -137,7 +147,9 @@ impl ContentView {
 #[derive(Debug)]
 struct MainView {
     drawn: bool,
+    buffer: Buffer,
     content: Vec<ContentView>,
+    bounds: Rect,
 }
 
 impl Delegate for MainView {
@@ -152,39 +164,68 @@ impl Delegate for MainView {
     }
 
     fn draw(&mut self, view: &mut View, text: &TextRenderer) {
-        let (width, _height) = (view.width(), view.height());
+        let (width, height) = (view.width(), view.height());
+        assert!(width == self.bounds.width);
+        assert!(height == self.bounds.height);
 
         let mut i = 0;
-        // TODO: [hleath 2017-11-12] The idea of the MainView is to
-        // have some amount of ability to scroll. The ContentViews
-        // should be rendered onto a much larger, "infinite" canvas,
-        // that the main view only changes the bounds of for rendering
-        // to the screen.
         for c in self.content.iter_mut() {
-            if c.needs_redraw() {
-                // TODO: [hleath 2017-11-12] Right now, all
-                // ContentViews are 50 pixels high. They should have a
-                // dynamic height depending on the amount of data to
-                // display.
-                let mut content_view = view.new_subview(
-                    Rect::new(Point::new(/*x=*/2, /*y=*/(52 * i) + 2),
-                              (width - 4), /*height=*/50));
+            // TODO: [hleath 2017-11-12] Right now, all
+            // ContentViews are 50 pixels high. They should have a
+            // dynamic height depending on the amount of data to
+            // display.
+            let content_view_height = 50;
+            let padding = 2;
+            let y = ((content_view_height + padding) * i) + padding;
+            if y + content_view_height >= self.buffer.height() {
+                // Trim any content views that would run off the end
+                // of the scroll buffer.
+                break;
+            }
+
+            if c.needs_redraw() || !self.drawn {
+                let mut content_view = View::new(
+                    Rect::new(Point::new(/*x=*/padding, y),
+                              width - (padding * 2), content_view_height),
+                    &mut self.buffer
+                );
 
                 c.draw(&mut content_view, text);
             }
             i += 1;
         }
 
+        view.render(&self.buffer, Rect::from_origin(width, height), self.bounds);
         self.drawn = true;
+
+        // self.bounds = self.debug_calculate_new_fake_scroll(self.bounds);
+        // self.mark_dirty()
     }
 }
 
 impl MainView {
-    fn new() -> MainView {
+    fn new(width: u64, height: u64, buffer_width: u64, buffer_height: u64) -> MainView {
+        // The buffer must be strictly larger than the underlying
+        // width/height.
+        assert!(width <= buffer_width && height <= buffer_height);
+
         MainView {
             drawn: false,
             content: Vec::new(),
+            bounds: Rect::from_origin(width, height),
+            buffer: Buffer::new(buffer_width, buffer_height)
         }
+    }
+
+    // TODO: [hleath 2017-11-12] Remove this when we have user input
+    // controlling the scrolling.
+    fn _debug_calculate_new_fake_scroll(&self, bounds: Rect) -> Rect {
+        // TODO: [hleath 2017-11-12] Implement fake scrolling behavior
+        bounds
+    }
+
+    fn mark_dirty(&mut self) {
+        self.drawn = false;
     }
 
     fn add_content(&mut self, c: ContentView) {
