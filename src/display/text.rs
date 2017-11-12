@@ -27,7 +27,7 @@ impl<'a> TextRenderer<'a> {
         }
     }
 
-    pub fn rasterize(&self, size: f32, color: Color, data: String) -> Buffer {
+    pub fn rasterize(&self, size: f32, color: Color, data: &str) -> Buffer {
         let pixel_height = size.ceil() as usize;
 
         // Uniformly scale the font to the requested size.
@@ -44,7 +44,7 @@ impl<'a> TextRenderer<'a> {
         let offset = point(0.0, v_metrics.ascent);
 
         // Draw the actual glyphs
-        let glyphs: Vec<PositionedGlyph> = self.font.layout(&data, scale, offset).collect();
+        let glyphs: Vec<PositionedGlyph> = self.font.layout(data, scale, offset).collect();
 
         // Find the most visually pleasing width to display
         let text_width = glyphs.iter().rev()

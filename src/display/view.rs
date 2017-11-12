@@ -141,6 +141,13 @@ impl<'a> View<'a> {
         }
     }
 
+    pub fn new_subview(&mut self, bounds: Rect) -> View {
+        Self::new(Rect::new(Point::new(bounds.origin.x + self.bounds.origin.x,
+                                       bounds.origin.y + self.bounds.origin.y),
+                            bounds.width,
+                            bounds.height), self.buffer)
+    }
+
     pub fn width(&self) -> u64 {
         self.bounds.width
     }
@@ -180,5 +187,21 @@ impl<'a> View<'a> {
                                                        frame.origin.y + self.bounds.origin.y),
                                             frame.width, frame.height),
                            bounds)
+    }
+
+    pub fn draw_box(&mut self, origin: Point, width: usize, height: usize, color: Color) {
+        let mut x = origin.x as usize;
+        let mut y = origin.y as usize;
+
+        while y < ((origin.y as usize) + height) {
+            while x < ((origin.x as usize) + width) {
+                self.write_pixel(x, y, color);
+
+                x += 1;
+            }
+
+            x = origin.x as usize;
+            y += 1;
+        }
     }
 }
