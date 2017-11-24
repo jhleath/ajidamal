@@ -1,18 +1,13 @@
-#![feature(trace_macros)]
 #![deny(warnings)]
 
 // TODO: Get rid of the dead code allowance once we get closer to
 // feature completeness in the GSM module.
 #![allow(dead_code)]
 
-#[macro_use]
-extern crate nom;
+extern crate ajidamal;
 
-#[macro_use]
-extern crate serde_derive;
-
-mod gsm;
-mod server;
+use ajidamal::gsm;
+use ajidamal::server;
 
 // TODO: Set up logging so that this program doesn't spew to stdout
 // for all of its messages.
