@@ -11,6 +11,8 @@ use super::base::{Color, Point, Rect};
 use super::text::{TextRenderer};
 use super::view::{Buffer, Delegate, View};
 
+use super::frame_buffer::{FrameBuffer};
+
 use self::chrono::prelude::*;
 
 use gsm::sms::Message;
@@ -21,6 +23,11 @@ pub enum Command {
     SetMessages(Vec<Message>)
 }
 
+pub enum ScreenFactory {
+    FrameBuffer(String),
+    Simulator
+}
+
 pub struct Interface {
     pub sender: mpsc::Sender<Command>,
     thread_handler: JoinHandle<()>,
@@ -28,10 +35,14 @@ pub struct Interface {
 
 impl Interface {
     pub fn new(fb_path: String) -> Interface {
+        Self::new_factory(ScreenFactory::FrameBuffer(fb_path))
+    }
+
+    pub fn new_factory(factory: ScreenFactory) -> Interface {
         let (send, recv) = mpsc::channel::<Command>();
 
         Interface {
-            thread_handler: Self::start_thread(fb_path, recv).unwrap(),
+            thread_handler: Self::start_thread(factory, recv).unwrap(),
             sender: send,
         }
     }
@@ -43,13 +54,19 @@ impl Interface {
 
     // The UI should run on a separate thread from the application
     // logic so that it stays somewhat responsive.
-    pub fn start_thread(fb_path: String, receiver: mpsc::Receiver<Command>) -> io::Result<JoinHandle<()>> {
+    pub fn start_thread(factory: ScreenFactory, receiver: mpsc::Receiver<Command>) -> io::Result<JoinHandle<()>> {
         // Create a reader thread to catch all responses from the
         // serial port
         thread::Builder::new().name("aji/ui".to_string()).spawn(
             move || {
-                let mut screen = Screen::new(fb_path);
-                let mut root_view = Buffer::new(screen.width as u64, screen.height as u64);
+                let mut screen: Box<Screen> = match factory {
+                    ScreenFactory::FrameBuffer(path) => Box::new(FrameBuffer::new(path)),
+                    ScreenFactory::Simulator => super::create_simulator()
+                };
+
+                let (width, height) = screen.dimensions();
+
+                let mut root_view = Buffer::new(width as u64, height as u64);
                 let text_renderer = TextRenderer::new();
 
                 let status_bar_height = 17;
@@ -58,8 +75,8 @@ impl Interface {
                 // The main view has the ability to render 200
                 // ContentViews of 50 pixels each in its internal
                 // buffer.
-                let mut main_view = MainView::new(screen.width as u64, screen.height as u64 - status_bar_height,
-                                                  screen.width as u64, 1000);
+                let mut main_view = MainView::new(width as u64, height as u64 - status_bar_height,
+                                                  width as u64, 1000);
 
                 main_view.add_content(ContentView::new("John Smith".to_string(),
                                                        "Text Message 1".to_string(),
@@ -99,7 +116,7 @@ impl Interface {
                     if status_bar.needs_redraw() {
                         changed = true;
                         status_bar.draw(
-                            &mut View::new(Rect::from_origin(screen.width as u64, status_bar_height),
+                            &mut View::new(Rect::from_origin(width as u64, status_bar_height),
                                            &mut root_view),
                             &text_renderer);
                     }
@@ -108,14 +125,14 @@ impl Interface {
                         changed = true;
                         main_view.draw(
                             &mut View::new(Rect::new(Point::new(/*x=*/0, status_bar_height),
-                                                     screen.width as u64,
-                                                     screen.height as u64 - status_bar_height),
+                                                     width as u64,
+                                                     height as u64 - status_bar_height),
                                            &mut root_view),
                             &text_renderer);
                     }
 
                     if changed {
-                        screen.render_view(&root_view);
+                        super::render_view(screen.as_mut(), &root_view);
                     }
 
                     thread::sleep(Duration::from_millis(UI_THREAD_SLEEP_MS));

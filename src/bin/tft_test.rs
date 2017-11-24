@@ -9,7 +9,6 @@ use ajidamal::core::{Core};
 
 extern crate serde_json;
 
-
 fn main() {
     let interface = Interface::new("/dev/fb1".to_string());
     Core::new(interface).exit();
