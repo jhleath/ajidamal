@@ -9,7 +9,9 @@ use self::x11::xlib::*;
 pub struct XScreen {
     display: *mut Display,
     screen: i32,
-    win: u64
+    win: u64,
+    white: u64,
+    black: u64,
 }
 
 impl XScreen {
@@ -31,23 +33,21 @@ impl XScreen {
                               XWhitePixel(display, screen));
         let win = XCreateSimpleWindow(display, XDefaultRootWindow(display),
                                       /*x=*/0, /*y=*/0, /*width=*/128, /*height=*/160,
-                                      /*border_width=*/5, /*border=*/white, /*background=*/black);
+                                      /*border_width=*/0, /*border=*/black, /*background=*/black);
         let win_title = ffi::CString::new("Ajidamal Emulator").unwrap();
         let win_icon = ffi::CString::new("aji/emu").unwrap();
         XSetStandardProperties(display, win, win_title.as_ptr(), win_icon.as_ptr(),
                                /*pixmap=*/x_none, /*argv=*/ptr::null_mut(), /*argc=*/0,
                                /*hints=*/ptr::null_mut());
-
-        let gc = XCreateGC(display, win, 0, ptr::null_mut());
-        XSetBackground(display, gc, white);
-        XSetForeground(display, gc, black);
         XClearWindow(display, win);
         XMapRaised(display, win);
 
         let mut screen = XScreen {
             display: display,
             screen: screen,
-            win: win
+            win: win,
+            white: white,
+            black: black
         };
 
         screen.flush();
@@ -61,8 +61,15 @@ impl Screen for XScreen {
         (128, 160)
     }
 
-    fn write_pixel(&mut self, _x: usize, _y: usize, _color: Color) {
+    fn write_pixel(&mut self, x: usize, y: usize, _color: Color) {
+        unsafe {
+            let gc = XCreateGC(self.display, self.win, 0, ptr::null_mut());
+            XSetBackground(self.display, gc, self.black);
+            XSetForeground(self.display, gc, self.white);
 
+            XDrawPoint(self.display, self.win, gc, x as i32, y as i32);
+            XFreeGC(self.display, gc);
+        }
     }
 
     fn flush(&mut self) {
