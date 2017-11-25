@@ -4,6 +4,8 @@ version = "0.1.0"
 authors = ["Hunter Leath <h@hunterleath.com>"]
 
 [dependencies]
+clap = "2.27.1"
+
 # Dependencies for the GSM module
 serial = "0.4"
 

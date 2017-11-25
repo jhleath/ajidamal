@@ -37,11 +37,11 @@ pub fn render_view(screen: &mut Screen, buffer: &Buffer) {
 }
 
 #[cfg(not(feature = "simulator"))]
-pub fn create_simulator() -> Box<Screen> {
+pub fn create_simulator(_scale: u64) -> Box<Screen> {
     panic!("Cannot create simulator at runtime without simulator compilation support.")
 }
 
 #[cfg(feature = "simulator")]
-pub fn create_simulator() -> Box<Screen> {
-    Box::new(x11::XScreen::new())
+pub fn create_simulator(scale: u64) -> Box<Screen> {
+    Box::new(x11::XScreen::new(scale))
 }

@@ -13,20 +13,21 @@ pub struct XScreen {
     white: u64,
     black: u64,
     cmap: Colormap,
+    scale: u64
 }
 
 impl XScreen {
-    pub fn new() -> XScreen {
+    pub fn new(scale: u64) -> XScreen {
         println!("Starting new XScreen...");
 
         unsafe {
-            Self::open_screen()
+            Self::open_screen(scale)
         }
     }
 
     // TODO: There is like no error handling code as part of the C
     // FFI. That should be added.
-    unsafe fn open_screen() -> XScreen {
+    unsafe fn open_screen(scale: u64) -> XScreen {
         let x_none = 0;
         let display = XOpenDisplay(ptr::null());
         let screen = XDefaultScreen(display);
@@ -50,7 +51,8 @@ impl XScreen {
             win: win,
             white: white,
             black: black,
-            cmap: cmap
+            cmap: cmap,
+            scale: scale
         };
 
         screen.flush();
@@ -83,10 +85,12 @@ impl Screen for XScreen {
             }
 
             let gc = XCreateGC(self.display, self.win, 0, ptr::null_mut());
-            XSetBackground(self.display, gc, self.black);
+            XSetBackground(self.display, gc, xcolor.pixel);
             XSetForeground(self.display, gc, xcolor.pixel);
 
-            XDrawPoint(self.display, self.win, gc, x as i32, y as i32);
+            XFillRectangle(self.display, self.win, gc,
+                           (x as u64 * self.scale) as i32, (y as u64 * self.scale) as i32,
+                           self.scale as u32, self.scale as u32);
             XFreeGC(self.display, gc);
         }
     }

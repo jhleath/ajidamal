@@ -25,7 +25,7 @@ pub enum Command {
 
 pub enum ScreenFactory {
     FrameBuffer(String),
-    Simulator
+    Simulator(u64)
 }
 
 pub struct Interface {
@@ -61,7 +61,7 @@ impl Interface {
             move || {
                 let mut screen: Box<Screen> = match factory {
                     ScreenFactory::FrameBuffer(path) => Box::new(FrameBuffer::new(path)),
-                    ScreenFactory::Simulator => super::create_simulator()
+                    ScreenFactory::Simulator(scale) => super::create_simulator(scale)
                 };
 
                 let (width, height) = screen.dimensions();
