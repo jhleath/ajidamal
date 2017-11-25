@@ -3,7 +3,6 @@ extern crate chrono;
 use std::cmp;
 use std::io;
 use std::thread::{self, JoinHandle};
-use std::time::{Duration};
 use std::sync::mpsc;
 
 use super::{Screen};
@@ -92,7 +91,7 @@ impl Interface {
                                                        Local::now()));
 
                 loop {
-                    match receiver.try_recv() {
+                    match receiver.recv() {
                         Ok(cmd) => {
                             match cmd {
                                 Command::SetMessages(m) => {
@@ -105,10 +104,7 @@ impl Interface {
                                 }
                             }
                         },
-                        Err(mpsc::TryRecvError::Empty) => (),
-                        Err(mpsc::TryRecvError::Disconnected) => {
-                            return
-                        }
+                        _ => return,
                     }
 
                     let mut changed = false;
@@ -134,8 +130,6 @@ impl Interface {
                     if changed {
                         super::render_view(screen.as_mut(), &root_view);
                     }
-
-                    thread::sleep(Duration::from_millis(UI_THREAD_SLEEP_MS));
                 }
             })
     }
@@ -262,7 +256,6 @@ impl Delegate for MainView {
 
         view.render(&self.buffer, Rect::from_origin(width, height), self.bounds);
         self.drawn = true;
-        self._debug_calculate_new_fake_scroll();
     }
 }
 
@@ -279,36 +272,6 @@ impl MainView {
             buffer: Buffer::new(buffer_width, buffer_height),
             used_height: None,
             scrolling_down: true
-        }
-    }
-
-    // TODO: [hleath 2017-11-12] Remove this when we have user input
-    // controlling the scrolling.
-    fn _debug_calculate_new_fake_scroll(&mut self) {
-        match self.used_height {
-            None => (),
-            Some(h) => {
-                let old_bounds = self.bounds;
-
-                let new_bounds = if self.scrolling_down {
-                    Rect::new(Point::new(/*x=*/0, old_bounds.origin.y + 1),
-                              old_bounds.width, old_bounds.height)
-                } else {
-                    Rect::new(Point::new(/*x=*/0, old_bounds.origin.y - 1),
-                              old_bounds.width, old_bounds.height)
-                };
-
-                if new_bounds.origin.y == 0 {
-                    assert!(!self.scrolling_down);
-                    self.scrolling_down = true;
-                } else if new_bounds.origin.y + new_bounds.height == h {
-                    assert!(self.scrolling_down);
-                    self.scrolling_down = false;
-                }
-
-                self.bounds = new_bounds;
-                self.mark_dirty()
-            }
         }
     }
 
